@@ -73,9 +73,9 @@ def test_gaussian_prior_compute_message_array():
 
 def test_gaussian_prior_get_sample_for_output_mean_and_var():
     mean = np.full((2, 2), 3.0)
-    gp = GaussianPrior(mean=mean, var=4.0, event_shape=(2, 2), batch_size=6)
+    gp = GaussianPrior(mean=mean, var=4.0, event_shape=(2, 2), batch_size=10)
     s = gp.get_sample_for_output()
-    assert s.shape == (6, 2, 2)
+    assert s.shape == (10, 2, 2)
     assert s.dtype == gp.dtype
     # sample mean should be roughly near the prior mean
     assert np.allclose(s.mean(), 3.0, atol=1.0)
