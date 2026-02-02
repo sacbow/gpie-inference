@@ -45,6 +45,6 @@ jobs:
         if: matrix.python-version == '3.11'
         uses: codecov/codecov-action@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           file: coverage.xml
           fail_ci_if_error: true
