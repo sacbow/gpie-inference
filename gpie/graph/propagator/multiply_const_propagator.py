@@ -51,7 +51,11 @@ class MultiplyConstPropagator(Propagator):
         Data type of the constant field.
     """
 
-    def __init__(self, const: Union[float, complex, np().ndarray], *, eps: float = 1e-12, dtype = np().complex64):
+    def __init__(self, 
+                 const: Union[float, complex, np().ndarray],
+                 *, 
+                 eps: float = 1e-12, dtype = np().complex64
+                 ):
         """
         Initialize a propagator that multiplies the incoming message by a fixed complex field.
 
@@ -70,6 +74,7 @@ class MultiplyConstPropagator(Propagator):
         # Store the raw constant as provided (no clamping). Keep dtype for later synchronization.
         self.const = np().asarray(const, dtype = dtype)
         self.const_dtype = self.const.dtype
+        self.support_threshold = np().max(np().abs(self.const)) * 1e-3
 
         # Validate and store stabilizer epsilon in a dtype-consistent 0-D array.
         if eps < 0:
@@ -81,32 +86,47 @@ class MultiplyConstPropagator(Propagator):
         #   - const_abs_sq: |const|^2 (real)
         self._rebuild_cached_fields()
 
+
     def _rebuild_cached_fields(self) -> None:
-        """(Re)build cached arrays derived from `self.const`. Call after dtype/backend changes."""
-        # Conjugate shares the complex dtype with `const`.
-        self.const_conj = np().conj(self.const)
-        # |const|^2 is real-valued with the corresponding real dtype.
-        self.const_abs_sq = np().abs(self.const) ** 2
+        abs_const = np().abs(self.const)
+
+        if self.support_threshold is not None:
+            # Build support mask ON CURRENT BACKEND
+            self._support_mask = abs_const >= self.support_threshold
+
+            zero_c = np().zeros((), dtype=self.const.dtype)
+            zero_r = np().zeros((), dtype=get_real_dtype(self.const.dtype))
+
+            const = np().where(self._support_mask, self.const, zero_c)
+
+            self.const = const
+            self.const_conj = np().conj(const)
+            self.const_abs_sq = np().where(
+                self._support_mask,
+                abs_const ** 2,
+                zero_r,
+            )
+        else:
+            self._support_mask = None
+            self.const_conj = np().conj(self.const)
+            self.const_abs_sq = abs_const ** 2
+
 
     def to_backend(self):
-        """
-        Move internal arrays to the current backend and refresh cached fields.
-
-        Notes
-        -----
-        - `const` is moved first and becomes the source of truth.
-        - `const_conj` and `const_abs_sq` are rebuilt to guarantee consistency.
-        - `_eps` is cast to the current real dtype to keep arithmetic stable.
-        """
-        # Move `const` to the active backend with its original complex dtype.
         self.const = move_array_to_current_backend(self.const, dtype=self.const_dtype)
-        self.const_dtype = self.const.dtype  # sync dtype after move
+        self.const_dtype = self.const.dtype
+        self.support_threshold = move_array_to_current_backend(
+            self.support_threshold,
+            dtype=get_real_dtype(self.const_dtype),
+        )
 
-        # Rebuild caches on the active backend to ensure exact consistency.
         self._rebuild_cached_fields()
 
-        # Cast epsilon to the current backend and real dtype corresponding to `const`.
-        self._eps = move_array_to_current_backend(self._eps, dtype=get_real_dtype(self.const_dtype))
+        self._eps = move_array_to_current_backend(
+            self._eps,
+            dtype=get_real_dtype(self.const_dtype),
+        )
+
     
 
     def _set_precision_mode(self, mode: Union[str, UnaryPropagatorPrecisionMode]) -> None:
@@ -130,7 +150,6 @@ class MultiplyConstPropagator(Propagator):
         mode = self.inputs["input"].precision_mode_enum
         if mode == PrecisionMode.SCALAR:
             self._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
-
 
     def set_precision_mode_backward(self):
         input_mode = self.inputs["input"].precision_mode_enum
@@ -250,6 +269,10 @@ class MultiplyConstPropagator(Propagator):
         # deterministic backward propagation (always ARRAY precision)
         mu = out_blk.data * const_conj / (abs_sq + eps)
         prec = out_blk.precision(raw=True) * abs_sq
+        ua = UA(mu, dtype=dtype, precision=prec)  # array precision by construction
+
+        #for numerical stability
+
         ua = UA(mu, dtype=dtype, precision=prec)  # array precision by construction
 
         # special EP handling only for SCALAR_TO_ARRAY (input scalar)

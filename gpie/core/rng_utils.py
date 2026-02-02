@@ -2,8 +2,6 @@ import warnings
 from .backend import get_backend
 
 
-
-
 def get_rng(seed=None):
     """Return an RNG appropriate for the current backend."""
     backend_name = get_backend().__name__

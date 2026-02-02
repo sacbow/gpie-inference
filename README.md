@@ -10,7 +10,7 @@
 
 ## Project Structure
 ```
-gpie/
+gpie-inference/
 ├── CHANGELOG.md
 ├── LICENSE
 ├── README.md

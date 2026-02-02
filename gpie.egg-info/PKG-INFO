@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: gpie
-Version: 0.2.2
+Version: 0.3.0
 Summary: Graph-based Probabilistic Inference Engine
 Author-email: Hajime Ueda <nd.hajimeueda@gmail.com>
 License: MIT
@@ -31,131 +31,180 @@ Dynamic: license-file
 
 [![codecov](https://codecov.io/gh/sacbow/gPIE/graph/badge.svg?token=OVKYM0YQZ4)](https://codecov.io/gh/sacbow/gPIE)
 
-**gPIE** is a modular, extensible Python framework for structured probabilistic inference via **Expectation Propagation (EP)** on factor graphs.
-It provides built-in support for complex-valued variables, NumPy/CuPy backend switching, and specialized components for computational imaging models.
+**gPIE** is a modular, extensible Python framework for structured probabilistic inference via
+**Expectation Propagation (EP)** on factor graphs, with **explicit control over message scheduling**.
+
 
 ## Project Structure
 ```
 gpie/
-├── gpie/  # Core package (importable as gpie)
-│  ├── __init__.py
-│  ├── core/                         # Core data structures and utils
-│  │  ├── uncertain_array/           # UA base + ops
-│  │  ├── accumulative_uncertain_array.py
-│  │  ├── adaptive_damping.py        # AD-GAMP-like damping scheduler (float32 internal)
-│  │  ├── backend.py
-│  │  ├── linalg_utils.py
-│  │  ├── rng_utils.py
-│  │  ├── fft.py
-│  │  └── metrics.py
-│  │
-│  ├── graph/                        # Factor graph + EP components
-│  │  ├── wave.py
-│  │  ├── factor.py
-│  │  ├── shortcuts.py
-│  │  ├── prior/
-│  │  │  ├── base.py
-│  │  │  ├── gaussian_prior.py
-│  │  │  └── sparse_prior.py         # logZ-based adaptive damping (optional)
-│  │  ├── propagator/
-│  │  │  ├── fft_2d_propagator.py
-│  │  │  ├── ifft_2d_propagator.py
-│  │  │  ├── phase_mask_fft_propagator.py
-│  │  │  ├── fork_propagator.py
-│  │  │  ├── slice_propagator.py
-│  │  │  └── zero_pad_propagator.py
-│  │  ├── measurement/
-│  │  │  ├── base.py
-│  │  │  ├── gaussian_measurement.py
-│  │  │  └── amplitude_measurement.py # fitness-based adaptive damping (optional)
-│  │  └── structure/                 # Graph + model DSL + visualization
-│  │     ├── graph.py
-│  │     ├── model.py
-│  │     └── visualization.py
-│  │
-│  └── imaging/
-│     └── ptychography/
-│        ├── data/
-│        │  ├── dataset.py           # PtychographyDataset
-│        │  └── diffraction_data.py
-│        ├── simulator/
-│        │  ├── forward.py           # ptychography_graph (sim/bench)
-│        │  ├── probe.py             # generate_probe
-│        │  └── scan.py              # generate_fermat_spiral_positions
-│        └── utils/
-│           ├── geometry.py
-│           └── visualization.py     # show/plot helpers
-│
-├── examples/
-│  ├── io_utils.py
-│  ├── sample_data/
-│  ├── notebooks/
-│  │  ├── holography_demo.ipynb
-│  │  ├── coded_diffraction_pattern_demo.ipynb
-│  │  ├── random_structured_cdi_demo.ipynb
-│  │  ├── compressed_sensing_demo.ipynb
-│  │  └── ptychography_demo.ipynb
-│  └── scripts/
-│     ├── holography/
-│     ├── coded_diffraction_pattern/
-│     ├── random_structured_cdi/
-│     ├── compressed_sensing/
-│     └── ptychography/
-│        └── ptychography_demo.py
-│
-├── profile/
-├── test/
+├── CHANGELOG.md
+├── LICENSE
+├── README.md
 ├── pyproject.toml
 ├── requirements.txt
-├── README.md
-└── LICENSE
+├── requirements-dev.txt
+├── requirements-optional.txt
+│
+├── gpie/                         # Core Python package (importable as `gpie`)
+│   ├── __init__.py
+│   ├── core/                     # Core numerical and EP utilities
+│   │   ├── __init__.py
+│   │   ├── backend.py            # NumPy / CuPy backend switching
+│   │   ├── blocks.py             # Block-wise scheduling utilities
+│   │   ├── fft.py                # FFT backend abstraction
+│   │   ├── linalg_utils.py       # Linear algebra helpers
+│   │   ├── metrics.py            # Error metrics (MSE, PMSE, PSNR, ...)
+│   │   ├── rng_utils.py          # Random number generation utilities
+│   │   ├── types.py              # Common type definitions
+│   │   ├── adaptive_damping.py   # Adaptive damping controller
+│   │   ├── accumulative_uncertain_array.py
+│   │   └── uncertain_array/      # UncertainArray abstraction
+│   │       ├── __init__.py
+│   │       ├── base.py
+│   │       ├── ops.py
+│   │       └── utils.py
+│   │
+│   ├── graph/                    # Factor graph and EP engine
+│   │   ├── __init__.py
+│   │   ├── wave.py               # Latent variable representation
+│   │   ├── factor.py             # Factor base class
+│   │   ├── shortcuts.py          # High-level DSL shortcuts (fft2, replicate, ...)
+│   │   │
+│   │   ├── prior/                # Prior factors
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py
+│   │   │   ├── gaussian_prior.py
+│   │   │   ├── sparse_prior.py
+│   │   │   └── support_prior.py
+│   │   │
+│   │   ├── propagator/           # Deterministic forward operators
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py
+│   │   │   ├── fft_2d_propagator.py
+│   │   │   ├── ifft_2d_propagator.py
+│   │   │   ├── phase_mask_fft_propagator.py
+│   │   │   ├── fork_propagator.py
+│   │   │   ├── slice_propagator.py
+│   │   │   ├── zero_pad_propagator.py
+│   │   │   ├── unitary_propagator.py
+│   │   │   ├── unitary_matrix_propagator.py
+│   │   │   ├── add_propagator.py
+│   │   │   ├── add_const_propagator.py
+│   │   │   ├── multiply_propagator.py
+│   │   │   ├── multiply_const_propagator.py
+│   │   │   ├── binary_propagator.py
+│   │   │   └── accumulative_propagator.py
+│   │   │
+│   │   ├── measurement/          # Measurement likelihoods
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py
+│   │   │   ├── gaussian_measurement.py
+│   │   │   └── amplitude_measurement.py
+│   │   │
+│   │   └── structure/            # Graph structure, DSL, visualization
+│   │       ├── __init__.py
+│   │       ├── graph.py
+│   │       ├── model.py
+│   │       ├── visualization.py
+│   │       ├── _bokeh_vis.py
+│   │       └── _matplotlib_vis.py
+│
+├── examples/                     # Numerical experiments and demos
+│   ├── scripts/
+│   ├── notebooks/
+│   └── sample_data/
+│
+├── profile/                      # Profiling and performance benchmarks
+│
+├── test/                         # Unit and integration tests
+│
+└── gpie.egg-info/                # Package metadata (generated)
 
 
 ```
 
 ## Features
-- **Expectation Propagation (EP)** on factor graphs.
-- **UncertainArray abstraction** for representing complex/real Gaussian distributions
-- NumPy/CuPy backend support: switch seamlessly between CPU and GPU with:
-```bash
-  import numpy as np, cupy as cp, gpie
-  gpie.set_backend(cp)  # or np
-```
-- Flexible **factor graph construction** with directional message scheduling
-- Modular components:
-  - Priors (e.g., Gaussian, sparse, support-based)
-  - Unary and binary propagators (e.g., FFT2D, phase modulation, multiplication)
-  - Measurement models (e.g., Gaussian, amplitude-based)
-- Adaptive Damping
+
+- **Flexible message scheduling for Expectation Propagation (EP)**
+  - Parallel (Jacobi-style) scheduling
+  - Sequential (Gauss–Seidel-style) scheduling
+  - Block-wise asynchronous scheduling
+  - Scheduling is controlled *at runtime* without changing the model code
+
+- **Expectation Propagation (EP)** on factor graphs
+  - Generic EP engine decoupled from specific imaging models
+  - Supports non-convex and complex-valued inference problems
+
+- **UncertainArray abstraction**
+  - Unified representation of real and complex Gaussian distributions, with isotropic and anisotropic variance
+
+- **NumPy / CuPy backend support**
+  - Seamless switching between CPU and GPU backends:
+    ```python
+    import numpy as np, cupy as cp, gpie
+    gpie.set_backend(cp)  # or np
+    ```
+  - Identical model and inference code for CPU and GPU execution
+
+- **Modular factor graph construction**
+  - Priors (Gaussian, sparse, support-based)
+  - Deterministic propagators (FFT, phase modulation, multiplication, slicing, replication)
+  - Measurement models (Gaussian, amplitude-based)
+
+- **Adaptive damping mechanisms**
   - `AmplitudeMeasurement`: fitness-based auto-tuning (`damping="auto"`)
   - `SparsePrior`: log-evidence-based auto-tuning (`damping="auto"`)
-- Built-in **sampling** and **expectation propagation** based on topological sort
-- Visual graph inspection via `graph.visualize()`
+  - Optional manual damping
+
+- **Built-in sampling and synthetic data generation**
+  - Forward sampling from factor graphs
+  - Consistent generation of observed variables for benchmarking
+
+- **Graph introspection and visualization**
+  - Interactive visualization via `graph.visualize()` (Bokeh / Graphviz)
+  - Useful for debugging and model inspection
+
 
 ## What's New
+
 See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
 
-**v0.2.0**: Adaptive Damping (auto-tuning) and multiple initialization strategies.
+**v0.3.0**:  
+Major architectural update introducing **explicit and flexible message scheduling** for Expectation Propagation.
 
-## Quick Start (Ptychography Example)
+- Parallel, sequential, and block-wise (asynchronous) EP scheduling
+- Runtime control of scheduling without modifying model definitions
+
+## Quick Start
+
+Below is a minimal example demonstrating how to define a probabilistic model
+and run Expectation Propagation with different scheduling strategies.
 
 ```python
-  # All comments are in English by request.
-  from gpie import model, fft2, GaussianPrior, AmplitudeMeasurement
-  from gpie.core.rng_utils import get_rng
+from gpie import model, GaussianPrior, GaussianMeasurement
 
-  @model
-  def ptychography_graph_known_probe(obj_shape, prb, indices, noise, dtype):
-      obj = ~GaussianPrior(event_shape=obj_shape, label="object", dtype=dtype)
-      patches = obj.extract_patches(indices)
-      exit_waves = prb * patches
-      # Auto-tuned damping (no manual parameter needed)
-      AmplitudeMeasurement(var=noise, label="meas", damping="auto") << fft2(exit_waves)
-      return
+# Define a simple Gaussian observation model
+@model
+def simple_ep_model(noise):
+    x = ~GaussianPrior(event_shape=(128, 128), label="x")
+    GaussianMeasurement(var=noise) << x
+    return
 
-  # During run, you can callback fitness:
-  # fitness = graph.get_factor("meas").compute_fitness()
+# Build the factor graph
+graph = simple_ep_model(noise=1e-3)
+
+# Run EP with different scheduling strategies
+graph.run(n_iter=50, schedule="parallel")
+graph.run(n_iter=50, schedule="sequential")
+graph.run(n_iter=50, schedule="block", block_size=4)
 ```
+After running EP, posterior means and variances can be accessed via:
+```python
+x_est = graph.get_wave("x").compute_belief().data
+```
+
+
 ## Tutorials & Notebooks
 A set of demonstration notebooks is available under:
 ``
@@ -168,7 +217,6 @@ Each notebook corresponds to a different inverse problem or imaging model:
 - `coded_diffraction_pattern_demo.ipynb`
 - `random_structured_cdi_demo.ipynb`
 - `compressed_sensing_demo.ipynb`
-- `ptychography_demo.ipynb`
 
 These illustrate the use of gPIE for EP-based inference on realistic synthetic data.
 
@@ -239,7 +287,7 @@ This project uses `pytest` for unit testing. To run the full test suite:
 pytest test/ --cov=gpie --cov-report=term-missing
 ```
 
-As of the latest release, the test coverage is approximately 87%, covering both CPU and GPU (CuPy) backends.
+As of the latest release, the test coverage is approximately 91%, covering both CPU and GPU (CuPy) backends.
 
 
 ## Related libraries
@@ -247,30 +295,30 @@ As of the latest release, the test coverage is approximately 87%, covering both 
 gPIE shares common ground with several existing frameworks for message passing inference:
 
 #### [ForneyLab (Julia)](https://biaslab.github.io/project/forneylab/)
-A declarative probabilistic programming framework based on factor graphs.
+ForneyLab is a declarative probabilistic programming framework built around factor graphs, with a strong emphasis on flexibility in inference algorithm design.
 
-- **Strength**: strong abstraction of inference algorithms via `MessageUpdateRule`.
-- **Difference**: gPIE instead provides a declarative Python API using only operator overloading, without macros or custom syntax.
+- **Strength**: Supports multiple inference paradigms—including sum–product, expectation propagation, and variational Bayes—and allows users to explicitly choose and compare inference strategies using free-energy-based criteria.
+- **Difference**: gPIE adopts a more constrained but scalable design: expectation propagation is used as the default inference mechanism, with variational updates introduced only where necessary for tractability. Rather than exposing algorithm selection as a primary user choice, gPIE focuses on stability and scalability through adaptive damping and scheduling.
 
 
 #### [Tree-AMP (Python)](https://sphinxteam.github.io/tramp.docs/0.1/html/index.html)
-A framework for Expectation Propagation algorithms, built on top of networkx.
+Tree-AMP is a Python framework for approximate message passing algorithms, primarily intended as a platform for numerical experimentation and theoretical analysis of AMP.
 
-- **Strength**: well-suited for graph manipulations.  
-  It also provides theoretical tools such as **state evolution** and **free entropy formalisms**.
-- **Difference**: gPIE is not tied to networkx and emphasizes a lightweight declarative DSL with GPU acceleration (CuPy backend).
+- **Strength**: Well-suited for constructing and analyzing AMP-style algorithms, and provides dedicated support for theoretical tools such as state evolution and free entropy.
+- **Difference**: In gPIE the choice of the exponential-family approximation for each variable is automatically determined by the compiler based on the surrounding factor graph, whereas in Tree-AMP this choice must be explicitly specified by the user.
+Second, gPIE supports multiplication between variables through factor nodes implemented using variational message passing (VMP), enabling models that involve products of latent variables (for e.g., in blind ptychography). 
 
 #### [Dimple (Java/Matlab)](https://github.com/analog-garage/dimple)
-A factor-graph based system with support for hardware acceleration via GP5.
+Dimple is an early and influential factor-graph-based inference system supporting both discrete and continuous variables, with a strong focus on large-scale discrete inference.
 
-- **Strength**: early pioneer in message passing DSLs with HPC focus.
-- **Difference**: gPIE targets GPU acceleration in Python, making it more accessible to computational imaging researchers.
+- **Strength**: Pioneered message passing DSLs for large graphical models and achieved scalability through hardware specialization, including a dedicated accelerator (GP5).
+- **Difference**: gPIE targets continuous-valued inference problems and GPU-accelerated scientific Python workflows, rather than discrete inference or hardware-specific execution.
 
 #### [Infer.NET (C#)](https://dotnet.github.io/infer/)
-A probabilistic programming framework developed at Microsoft, supporting Expectation Propagation, Variational Message Passing, and Gibbs Sampling.
+Infer.NET is a mature probabilistic programming framework developed at Microsoft, supporting expectation propagation, variational message passing, and Gibbs sampling.
 
-- **Strength**: industrial-grade implementation with a rich set of inference algorithms. Widely used in academia and industry.  
-- **Difference**: unlike gPIE, Infer.NET is implemented in C# and not designed for GPU acceleration or scientific Python workflows.
+- **Strength**: Industrial-grade implementation with broad model expressiveness and extensive use in both academic and industrial settings.
+- **Difference**: Infer.NET relies on a compilation-based execution model and requires a global choice of inference algorithm. In contrast, gPIE allows compositional combinations of message passing rules (EP and VMP) within a single model and emphasizes runtime control of scheduling.
 
 
 

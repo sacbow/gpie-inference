@@ -298,7 +298,7 @@ class Wave:
             weighted += p_i * ua.data
             p += p_i
 
-        mean = weighted / p
+        mean = weighted / (p + 1e-12)
         return UncertainArray(mean, dtype=dtype, precision=p)
 
     
