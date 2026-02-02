@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gpie"
+name = "gpie-inference"
 version = "0.3.0"
 description = "Graph-based Probabilistic Inference Engine"
 authors = [{ name="Hajime Ueda", email="nd.hajimeueda@gmail.com" }]
@@ -44,3 +44,9 @@ dev = [
 
 [tool.setuptools]
 packages = ["gpie"]
+
+[project.urls]
+Homepage = "https://github.com/sacbow/gpie-inference"
+Repository = "https://github.com/sacbow/gpie-inference"
+Issues = "https://github.com/sacbow/gpie-inference/issues"
+
