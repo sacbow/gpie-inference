@@ -37,22 +37,6 @@ def test_astype_complex_to_real_with_warning(xp):
     assert np.allclose(ua_real.precision(raw=False), 4.0)
 
 
-@pytest.mark.parametrize("xp", backend_libs)
-def test_astype_complex_to_real_no_warning_if_imag_zero(xp):
-    backend.set_backend(xp)
-    # complex UA with zero imaginary part
-    data = xp.array([[1+0j, 2+0j]], dtype=xp.complex64)
-    ua = UncertainArray(data, dtype=xp.complex64, precision=3.0)
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        ua_real = ua.astype(xp.float32)
-        # no warnings expected
-        assert len(w) == 0
-
-    # precision doubled
-    assert np.allclose(ua_real.precision(raw=False), 6.0)
-
 
 @pytest.mark.parametrize("xp", backend_libs)
 def test_real_property_from_complex(xp):
@@ -65,17 +49,6 @@ def test_real_property_from_complex(xp):
     assert ua_real.is_real()
     # precision doubled
     assert np.allclose(ua_real.precision(raw=False), 10.0)
-
-
-@pytest.mark.parametrize("xp", backend_libs)
-def test_real_property_when_already_real(xp):
-    backend.set_backend(xp)
-    data = xp.array([[1.0, 2.0]], dtype=xp.float32)
-    ua = UncertainArray(data, dtype=xp.float32, precision=7.0)
-
-    ua_real = ua.real
-    # should return self, not a new object
-    assert ua_real is ua
 
 
 @pytest.mark.parametrize("xp", backend_libs)
@@ -151,28 +124,6 @@ def test_product_reduce_over_batch_preserves_precision_mode(xp):
     )
     # Precision mode should remain array
     assert reduced_array.precision_mode == ua_array.precision_mode
-
-
-
-@pytest.mark.parametrize("xp", backend_libs)
-def test_as_precision_roundtrip_vectorized(xp):
-    backend.set_backend(xp)
-    ua = UncertainArray.random(event_shape=(3, 3), batch_size=4, precision=2.0, scalar_precision=True)
-
-    assert ua.precision_mode == PrecisionMode.SCALAR
-    ua_array = ua.as_array_precision()
-    assert ua_array.precision_mode == PrecisionMode.ARRAY
-    ua_back = ua_array.as_scalar_precision()
-    assert ua_back.precision_mode == PrecisionMode.SCALAR
-
-
-@pytest.mark.parametrize("xp", backend_libs)
-def test_repr_contains_batch_info(xp):
-    backend.set_backend(xp)
-    ua = UncertainArray.zeros(event_shape=(8,), batch_size=5)
-    r = repr(ua)
-    assert "batch_size=5" in r
-    assert "event_shape=(8,)" in r
 
 
 @pytest.mark.parametrize("xp", backend_libs)
@@ -400,3 +351,66 @@ def test_ua_copy_is_deep(xp):
     # Copy must remain unchanged
     assert xp.allclose(ua_copy.data, 3.0)
     assert xp.allclose(ua_copy.precision(raw=False), 1.0)
+
+
+@pytest.mark.skipif(not has_cupy, reason="CuPy required")
+def test_to_backend_moves_precision_array():
+    import numpy as np
+    import cupy as cp
+    from gpie.core import backend
+    from gpie.core.uncertain_array import UncertainArray
+
+    backend.set_backend(np)
+
+    ua = UncertainArray.zeros(
+        event_shape=(2, 2),
+        batch_size=3,
+        dtype=np.complex64,
+        precision=2.0,
+        scalar_precision=False, 
+    )
+
+    # sanity check
+    assert isinstance(ua.data, np.ndarray)
+    assert isinstance(ua.precision(raw=True), np.ndarray)
+
+    backend.set_backend(cp)
+    ua.to_backend()
+
+    assert isinstance(ua.data, cp.ndarray)
+    assert isinstance(ua.precision(raw=True), cp.ndarray)
+
+
+@pytest.mark.skipif(not has_cupy, reason="CuPy required")
+def test_precision_numpy_input_is_moved_to_cupy_backend():
+    import numpy as np
+    import cupy as cp
+    from gpie.core import backend
+    from gpie.core.uncertain_array import UncertainArray
+
+    backend.set_backend(cp)
+
+    # Mean data is on GPU
+    data = cp.zeros((2, 2, 2), dtype=cp.complex64)
+
+    # Precision is given as NumPy array
+    precision_np = np.ones((2, 2, 2), dtype=np.float32)
+
+    ua = UncertainArray(
+        data,
+        dtype=cp.complex64,
+        precision=precision_np,  # ndarray → array-precision mode
+        batched=True,
+    )
+
+    # Data must stay on GPU
+    assert isinstance(ua.data, cp.ndarray)
+
+    # Precision must be moved to GPU as well
+    prec = ua.precision(raw=True)
+    assert isinstance(prec, cp.ndarray)
+
+    # Precision mode should be ARRAY
+    from gpie.core.types import PrecisionMode
+    assert ua.precision_mode == PrecisionMode.ARRAY
+

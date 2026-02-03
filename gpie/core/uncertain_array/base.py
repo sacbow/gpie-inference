@@ -182,57 +182,56 @@ class UncertainArray:
         new_precision = 2.0 * self.precision(raw = True) # Complex → Real: Real part carries half the variance, so precision doubles
         return UncertainArray(real_data, dtype = get_real_dtype(self.dtype), precision=new_precision)
 
-
     def _set_precision_internal(self, value: Precision, batched: bool) -> None:
-        """
-        Internal setter for precision. Handles both scalar and array precision modes.
-
-        - Scalar mode:
-            * batched=True: precision has shape (batch_size, 1, ..., 1)
-            * batched=False: precision is a scalar value or shape == ()
-        - Array mode:
-            * batched=True: precision is broadcastable to (batch_size, *event_shape)
-            * batched=False: precision has shape == event_shape
-        """
         real_dtype = get_real_dtype(self.dtype)
-        # ----- Case 1: scalar-like value ----
+
+        # --------------------------------------------------
+        # Case 1: scalar-like
+        # --------------------------------------------------
         if self.is_scalar(value):
             if value < 0:
                 raise ValueError("Precision must be positive.")
 
-            # broadcastable scalar precision
-            shape = (self.batch_size,) + (1,) * len(self.event_shape) if batched else (1,) * self.data.ndim
-            self._precision = np().full(shape, float(value), dtype=real_dtype)
-            self._scalar_precision = True
-            return
-        
-        # ----- Case 2: ndarray-like -----
-        arr = (
-                value if isinstance(value, np().ndarray) and value.dtype == real_dtype
-                else np().asarray(value, dtype=real_dtype)
+            shape = (
+                (self.batch_size,) + (1,) * len(self.event_shape)
+                if batched
+                else (1,) * self.data.ndim
             )
 
+            prec = np().full(shape, float(value), dtype=real_dtype)
+            self._precision = move_array_to_current_backend(prec, dtype=real_dtype)
+            self._scalar_precision = True
+            return
+
+        # --------------------------------------------------
+        # Case 2: ndarray-like
+        # --------------------------------------------------
+        arr = (
+            value
+            if isinstance(value, np().ndarray) and value.dtype == real_dtype
+            else np().asarray(value, dtype=real_dtype)
+        )
+
         if batched:
-            # must match batch dimension
             if arr.shape[0] != self.batch_size:
                 raise ValueError(
                     f"Precision batch dimension mismatch: {arr.shape[0]} vs batch_size={self.batch_size}"
                 )
-            
-            # scalar precision case: shape == (batch_size,)
+
+            # scalar precision: (B,)
             if arr.shape == (self.batch_size,):
                 arr = arr.reshape((self.batch_size,) + (1,) * len(self.event_shape))
-                self._precision = arr
-                self._scalar_precision = True
-                return
-            
-            # scalar precision case: shape == (batch_size, 1, 1, ..., 1)
-            if arr.shape == (self.batch_size,) + (1,) * len(self.event_shape):
-                self._precision = arr
+                self._precision = move_array_to_current_backend(arr, dtype=real_dtype)
                 self._scalar_precision = True
                 return
 
-            # array precision case: broadcast to data.shape
+            # scalar precision: (B,1,1,...)
+            if arr.shape == (self.batch_size,) + (1,) * len(self.event_shape):
+                self._precision = move_array_to_current_backend(arr, dtype=real_dtype)
+                self._scalar_precision = True
+                return
+
+            # array precision
             try:
                 np().broadcast_shapes(arr.shape, self.data.shape)
             except Exception:
@@ -240,22 +239,21 @@ class UncertainArray:
                     f"Precision shape {arr.shape} is not broadcastable to data shape {self.data.shape}."
                 )
 
-            self._precision = arr
+            self._precision = move_array_to_current_backend(arr, dtype=real_dtype)
             self._scalar_precision = False
             return
 
         else:
-            # batched = False
-            # scalar precision: shape == () or is scalar-like
-            
+            # batched=False
             if arr.size == 1 and len(arr.shape) == len(self.event_shape):
-                self._precision = arr.reshape((1,) + arr.shape)
+                arr = arr.reshape((1,) + arr.shape)
+                self._precision = move_array_to_current_backend(arr, dtype=real_dtype)
                 self._scalar_precision = True
                 return
 
-            # array precision: must match event_shape
             if arr.shape == self.event_shape:
-                self._precision = arr.reshape((1,) + self.event_shape)
+                arr = arr.reshape((1,) + self.event_shape)
+                self._precision = move_array_to_current_backend(arr, dtype=real_dtype)
                 self._scalar_precision = False
                 return
 

@@ -6,7 +6,6 @@ from gpie.core import backend
 from gpie.core.rng_utils import get_rng
 from gpie.core.linalg_utils import (
     reduce_precision_to_scalar,
-    complex_normal_random_array,
     random_normal_array,
     sparse_complex_array,
     random_unitary_matrix,
@@ -68,19 +67,6 @@ def test_reduce_precision_to_scalar_valid_and_invalid(xp):
             [1.0, 1.0, 1.0]
         ])
         reduce_precision_to_scalar(arr_invalid)
-
-
-
-
-@pytest.mark.parametrize("xp", backend_libs)
-def test_complex_normal_random_array_warns_and_shape(xp):
-    backend.set_backend(xp)
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        arr = complex_normal_random_array((4, 4), dtype=xp.complex128)
-        assert arr.shape == (4, 4)
-        assert xp.iscomplexobj(arr)
-        assert any("deprecated" in str(wi.message).lower() for wi in w)
 
 
 @pytest.mark.parametrize("xp", backend_libs)

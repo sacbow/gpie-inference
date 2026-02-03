@@ -339,26 +339,84 @@ class Graph:
         n_iter: int = 10,
         schedule: Literal["parallel", "sequential"] = "parallel",
         block_size: int = 1,
+        device: Literal["cpu", "cuda"] = "cpu",
+        output_device: Literal["cpu", "cuda"] = "cpu",
         callback=None,
         verbose: bool = False,
     ):
         """
-        Run belief propagation with optional block-wise scheduling.
+        Run Expectation Propagation (EP) inference on the compiled graph.
+
+        This method executes forward-backward message passing for a specified
+        number of iterations, optionally using block-wise (sequential) scheduling.
+        The execution device (CPU/GPU) is controlled explicitly via arguments.
+
+        Device semantics:
+            - `device` specifies where inference is executed.
+            - `output_device` specifies where results (beliefs, messages) are stored
+            after `run()` completes.
+            - By default, results are moved back to CPU to provide a NumPy-based
+            user-facing API, regardless of the execution device.
 
         Args:
-            n_iter:
-                Number of forward-backward iterations.
-            schedule:
-                - "parallel": full-batch updates (legacy behavior)
-                - "sequential": block-wise updates over batch dimension
-            block_size:
-                Block size used when schedule="sequential".
-                If None or >= full batch size, treated as full-batch.
-            callback:
-                Optional callback(graph, iteration).
-            verbose:
-                Whether to show a progress bar.
+            n_iter (int):
+                Number of forward-backward EP iterations.
+
+            schedule ({"parallel", "sequential"}):
+                Message-passing schedule:
+                - "parallel": full-batch updates (default, legacy behavior)
+                - "sequential": block-wise updates over the batch dimension
+
+            block_size (int):
+                Block size used when `schedule="sequential"`.
+                If None or greater than or equal to the full batch size,
+                the execution is treated as full-batch.
+
+            device ({"cpu", "cuda"}):
+                Device used for inference execution.
+                - "cpu": NumPy backend
+                - "cuda": CuPy backend
+
+            output_device ({"cpu", "cuda"}):
+                Device on which results are stored after inference.
+                Defaults to "cpu" to ensure NumPy-based result access.
+
+            callback (callable, optional):
+                Optional callback function called as `callback(graph, iteration)`
+                after each iteration.
+
+            verbose (bool):
+                If True, display a progress bar during inference.
+
+        Raises:
+            RuntimeError:
+                If the graph has not been compiled before calling `run()`.
+
+            ValueError:
+                If an unknown device or output_device is specified.
         """
+        from ...core.backend import set_backend
+        import numpy as _np
+
+        # ------------------------------------------------------------
+        # Select execution device
+        # ------------------------------------------------------------
+        if device == "cpu":
+            set_backend(_np)
+        elif device == "cuda":
+            try:
+                import cupy as cp
+            except ImportError as e:
+                raise RuntimeError(
+                    "device='cuda' was requested, but CuPy is not installed."
+                ) from e
+            set_backend(cp)
+        else:
+            raise ValueError(f"Unknown device: {device}")
+
+        # Move all graph state to the execution backend
+        self.to_backend()
+
         if self._full_batch_size is None:
             raise RuntimeError("Graph must be compiled before run().")
 
@@ -371,9 +429,7 @@ class Graph:
             blocks = [None]
         else:
             from ...core.blocks import BlockGenerator
-            blocks = list(
-                BlockGenerator(B=B, block_size=block_size).iter_blocks()
-            )
+            blocks = list(BlockGenerator(B=B, block_size=block_size).iter_blocks())
 
         # ------------------------------------------------------------
         # Iteration iterator (with optional progress bar)
@@ -381,7 +437,7 @@ class Graph:
         if verbose:
             try:
                 from tqdm import tqdm
-                iterator = tqdm(range(n_iter), desc="BP Iteration")
+                iterator = tqdm(range(n_iter), desc="EP Iteration")
             except ImportError:
                 iterator = range(n_iter)
         else:
@@ -403,6 +459,20 @@ class Graph:
 
             if callback is not None:
                 callback(self, t)
+
+        # ------------------------------------------------------------
+        # Move results to output device (default: CPU)
+        # ------------------------------------------------------------
+        if output_device != device:
+            if output_device == "cpu":
+                set_backend(_np)
+            elif output_device == "cuda":
+                import cupy as cp
+                set_backend(cp)
+            else:
+                raise ValueError(f"Unknown output_device: {output_device}")
+
+        self.to_backend()
 
 
 

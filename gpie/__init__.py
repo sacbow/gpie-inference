@@ -1,4 +1,4 @@
-__version__ = "0.1.2"
+__version__ = "0.3.0"
 
 # core modules
 from .core import (
@@ -12,9 +12,6 @@ from .core import (
     UnaryPropagatorPrecisionMode,
     BinaryPropagatorPrecisionMode,
 )
-
-# Backend control (set_backend, get_backend)
-from .core.backend import set_backend, get_backend
 
 from .core.linalg_utils import (
     random_normal_array,

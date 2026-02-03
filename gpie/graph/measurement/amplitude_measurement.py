@@ -3,9 +3,9 @@ from typing import Optional, Union, Any
 from .base import Measurement
 from ...core.backend import np
 from ...core.adaptive_damping import AdaptiveDamping, DampingScheduleConfig
+from ...core.linalg_utils import random_normal_array
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.types import PrecisionMode, get_real_dtype
-from ...core.rng_utils import normal
 
 
 class AmplitudeMeasurement(Measurement):
@@ -56,7 +56,12 @@ class AmplitudeMeasurement(Measurement):
             raise RuntimeError("Input sample not available.")
 
         abs_x = np().abs(x)
-        noise = normal(std=self._var ** 0.5, size=abs_x.shape, rng=rng)
+        noise = random_normal_array(
+                    abs_x.shape,
+                    dtype=abs_x.dtype,
+                    rng=rng,
+                ) * self._var**0.5
+        
         self._sample = (abs_x + noise).astype(self.observed_dtype)
 
 
