@@ -6,7 +6,7 @@ from ...core.types import PrecisionMode
 from ...core.rng_utils import get_rng
 import contextlib
 import threading
-from typing import Literal, Optional
+from typing import Literal, Optional, Callable
 
 _current_graph = threading.local()
 
@@ -337,142 +337,134 @@ class Graph:
     def run(
         self,
         n_iter: int = 10,
+        *,
         schedule: Literal["parallel", "sequential"] = "parallel",
-        block_size: int = 1,
+        block_size: Optional[int] = 1,
         device: Literal["cpu", "cuda"] = "cpu",
-        output_device: Literal["cpu", "cuda"] = "cpu",
-        callback=None,
+        callback: Optional[Callable[["Graph", int], None]] = None,
         verbose: bool = False,
-    ):
+    ) -> None:
         """
         Run Expectation Propagation (EP) inference on the compiled graph.
 
-        This method executes forward-backward message passing for a specified
-        number of iterations, optionally using block-wise (sequential) scheduling.
-        The execution device (CPU/GPU) is controlled explicitly via arguments.
+        Device policy (session-based):
+            - All non-EP workloads (model definition, compile, data generation, visualization) are CPU-first.
+            - This method creates an inference session:
+                * at session start: move the entire graph state to the specified execution device
+                * at session end: ALWAYS move the entire graph state back to CPU (NumPy backend)
 
-        Device semantics:
-            - `device` specifies where inference is executed.
-            - `output_device` specifies where results (beliefs, messages) are stored
-            after `run()` completes.
-            - By default, results are moved back to CPU to provide a NumPy-based
-            user-facing API, regardless of the execution device.
+        Notes:
+            - The global backend is an internal implementation detail; users are not expected to manage it.
+            - RNG is NumPy-based; if device="cuda", random numbers are generated on CPU and then transferred.
 
         Args:
-            n_iter (int):
-                Number of forward-backward EP iterations.
-
-            schedule ({"parallel", "sequential"}):
-                Message-passing schedule:
-                - "parallel": full-batch updates (default, legacy behavior)
-                - "sequential": block-wise updates over the batch dimension
-
-            block_size (int):
-                Block size used when `schedule="sequential"`.
-                If None or greater than or equal to the full batch size,
-                the execution is treated as full-batch.
-
-            device ({"cpu", "cuda"}):
-                Device used for inference execution.
+            n_iter: Number of EP iterations.
+            schedule:
+                - "parallel": full-batch updates only (block=None).
+                - "sequential": block-wise updates over the full-batch wave(s).
+            block_size:
+                Block size for sequential updates. If None or >= full batch size, falls back to full-batch.
+            device:
                 - "cpu": NumPy backend
-                - "cuda": CuPy backend
-
-            output_device ({"cpu", "cuda"}):
-                Device on which results are stored after inference.
-                Defaults to "cpu" to ensure NumPy-based result access.
-
-            callback (callable, optional):
-                Optional callback function called as `callback(graph, iteration)`
-                after each iteration.
-
-            verbose (bool):
-                If True, display a progress bar during inference.
+                - "cuda": CuPy backend (requires CuPy)
+            callback:
+                Optional callback called as callback(graph, t) after each iteration t.
+            verbose:
+                If True, show a progress bar (requires tqdm).
 
         Raises:
-            RuntimeError:
-                If the graph has not been compiled before calling `run()`.
-
-            ValueError:
-                If an unknown device or output_device is specified.
+            RuntimeError: If graph is not compiled.
+            ValueError: If invalid device/schedule parameters are given.
         """
-        from ...core.backend import set_backend
+        # Import locally to keep module-level import surface small
         import numpy as _np
+        from ...core.backend import set_backend
 
-        # ------------------------------------------------------------
-        # Select execution device
-        # ------------------------------------------------------------
-        if device == "cpu":
-            set_backend(_np)
-        elif device == "cuda":
-            try:
-                import cupy as cp
-            except ImportError as e:
-                raise RuntimeError(
-                    "device='cuda' was requested, but CuPy is not installed."
-                ) from e
-            set_backend(cp)
-        else:
-            raise ValueError(f"Unknown device: {device}")
-
-        # Move all graph state to the execution backend
-        self.to_backend()
-
-        if self._full_batch_size is None:
+        # ------------------------------
+        # Preconditions
+        # ------------------------------
+        if self._full_batch_size is None or self._nodes_sorted is None or self._nodes_sorted_reverse is None:
             raise RuntimeError("Graph must be compiled before run().")
 
-        B = self._full_batch_size
+        if n_iter < 0:
+            raise ValueError(f"n_iter must be non-negative, got {n_iter}")
 
-        # ------------------------------------------------------------
-        # Determine block schedule
-        # ------------------------------------------------------------
-        if schedule == "parallel" or block_size is None or block_size >= B:
-            blocks = [None]
-        else:
-            from ...core.blocks import BlockGenerator
-            blocks = list(BlockGenerator(B=B, block_size=block_size).iter_blocks())
+        if schedule not in ("parallel", "sequential"):
+            raise ValueError(f"Unknown schedule: {schedule}")
 
-        # ------------------------------------------------------------
-        # Iteration iterator (with optional progress bar)
-        # ------------------------------------------------------------
-        if verbose:
-            try:
-                from tqdm import tqdm
-                iterator = tqdm(range(n_iter), desc="EP Iteration")
-            except ImportError:
-                iterator = range(n_iter)
-        else:
-            iterator = range(n_iter)
+        # ------------------------------
+        # Helper: select execution backend module
+        # ------------------------------
+        def _select_backend(exec_device: str):
+            if exec_device == "cpu":
+                return _np
+            if exec_device == "cuda":
+                try:
+                    import cupy as cp
+                except ImportError as e:
+                    raise RuntimeError("device='cuda' was requested, but CuPy is not installed.") from e
+                return cp
+            raise ValueError(f"Unknown device: {exec_device}")
 
-        # ------------------------------------------------------------
-        # Warm-start: stabilize messages before sequential updates
-        # ------------------------------------------------------------
-        self.forward()
-        self.backward()
+        # Always restore to CPU at the end of this method (even on exceptions)
+        exec_backend = _select_backend(device)
 
-        # ------------------------------------------------------------
-        # Main EP loop
-        # ------------------------------------------------------------
-        for t in iterator:
-            for blk in blocks:
-                self.forward(block=blk)
-                self.backward(block=blk)
+        try:
+            # ------------------------------
+            # Enter inference session: switch backend + move graph state
+            # ------------------------------
+            set_backend(exec_backend)
+            self.to_backend()
 
-            if callback is not None:
-                callback(self, t)
+            B = self._full_batch_size
 
-        # ------------------------------------------------------------
-        # Move results to output device (default: CPU)
-        # ------------------------------------------------------------
-        if output_device != device:
-            if output_device == "cpu":
-                set_backend(_np)
-            elif output_device == "cuda":
-                import cupy as cp
-                set_backend(cp)
+            # ------------------------------
+            # Build block schedule
+            # ------------------------------
+            if schedule == "parallel" or block_size is None or block_size >= B:
+                blocks = [None]
             else:
-                raise ValueError(f"Unknown output_device: {output_device}")
+                if block_size <= 0:
+                    raise ValueError(f"block_size must be positive, got {block_size}")
+                from ...core.blocks import BlockGenerator
+                blocks = list(BlockGenerator(B=B, block_size=block_size).iter_blocks())
 
-        self.to_backend()
+            # ------------------------------
+            # Iteration driver (optional progress bar)
+            # ------------------------------
+            if verbose:
+                try:
+                    from tqdm import tqdm
+                    iterator = tqdm(range(n_iter), desc="EP Iteration")
+                except ImportError:
+                    iterator = range(n_iter)
+            else:
+                iterator = range(n_iter)
+
+            # ------------------------------
+            # Warm-start:
+            #   - ensures last_forward_message / last_backward_messages buffers exist
+            # ------------------------------
+            self.forward(block=None)
+            self.backward(block=None)
+
+            # ------------------------------
+            # Main EP loop
+            # ------------------------------
+            for t in iterator:
+                for blk in blocks:
+                    self.forward(block=blk)
+                    self.backward(block=blk)
+
+                if callback is not None:
+                    callback(self, t)
+
+        finally:
+            # ------------------------------
+            # Exit inference session: ALWAYS restore CPU backend + move state back
+            # ------------------------------
+            set_backend(_np)
+            self.to_backend()
 
 
 

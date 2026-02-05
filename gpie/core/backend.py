@@ -65,5 +65,37 @@ def move_array_to_current_backend(array: Any, dtype: Optional[_np.dtype] = None)
     return arr
 
 
+def ensure_array_on_current_backend(array: Any):
+    """
+    Ensure array is on the current backend.
+
+    Semantics:
+        - If current backend is NumPy: return array as-is.
+        - If current backend is CuPy:
+            * NumPy array -> moved to GPU
+            * CuPy array  -> kept as-is
+        - GPU -> CPU transfer is NEVER performed here.
+    """
+    xp = np()
+
+    # Lazy CuPy import
+    try:
+        import cupy as cp
+        is_cupy = isinstance(array, cp.ndarray)
+    except ImportError:
+        is_cupy = False
+
+    # Already on GPU → keep
+    if is_cupy:
+        return array
+
+    # CPU backend → keep CPU array
+    if xp.__name__ == "numpy":
+        return array
+
+    # GPU backend → move CPU array to GPU
+    return xp.asarray(array)
+
+
 # Aliases for convenience
 np = get_backend  # use: `np().sum(...)`

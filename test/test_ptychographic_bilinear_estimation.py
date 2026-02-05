@@ -1,5 +1,3 @@
-# tests/test_blind_ptychography_integration.py
-
 import numpy as np
 import pytest
 import importlib.util
@@ -13,6 +11,7 @@ from gpie import (
 )
 from gpie.core.rng_utils import get_rng
 from gpie.core.linalg_utils import random_normal_array
+from gpie.core.backend import set_backend
 
 
 # -------------------------------------------------
@@ -85,6 +84,8 @@ def blind_ptychography_model(indices, noise, dtype):
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 @pytest.mark.parametrize("schedule", ["parallel", "sequential"])
 def test_blind_ptychography_end_to_end(device, schedule):
+    set_backend(np)
+
     if device == "cuda" and not has_cupy:
         pytest.skip("CuPy is not available")
 
@@ -104,6 +105,7 @@ def test_blind_ptychography_end_to_end(device, schedule):
 
     # -------------------------------------------------
     # Device-side copies for monitoring
+    # (explicit, Inspector 導入前の暫定対応)
     # -------------------------------------------------
 
     if device == "cuda":
@@ -152,17 +154,15 @@ def test_blind_ptychography_end_to_end(device, schedule):
         obj_est = graph.get_wave("object").compute_belief().data
         prb_est = graph.get_wave("probe").compute_belief().data
 
-        obj_est_n = obj_est / obj_est.__class__.linalg.norm(obj_est)
-        prb_est_n = prb_est / prb_est.__class__.linalg.norm(prb_est)
-
-        obj_true_n = true_obj_dev / true_obj_dev.__class__.linalg.norm(true_obj_dev)
-        prb_true_n = true_prb_dev / true_prb_dev.__class__.linalg.norm(true_prb_dev)
-
-        history_obj.append(float(mse(obj_est_n, obj_true_n)))
-        history_prb.append(float(mse(prb_est_n, prb_true_n)))
+        history_obj.append(
+            mse(obj_est, true_obj_dev, normalize=True)
+        )
+        history_prb.append(
+            mse(prb_est, true_prb_dev, normalize=True)
+        )
 
     # -------------------------------------------------
-    # Run inference (device is specified ONLY here)
+    # Run inference
     # -------------------------------------------------
 
     g.run(
@@ -176,8 +176,17 @@ def test_blind_ptychography_end_to_end(device, schedule):
     # Assertions
     # -------------------------------------------------
 
-    assert history_obj[-1] < ERROR_THRESHOLD
-    assert history_prb[-1] < ERROR_THRESHOLD
+    assert history_obj[-1] < ERROR_THRESHOLD, (
+        f"Object did not converge "
+        f"(device={device}, schedule={schedule}): "
+        f"final MSE={history_obj[-1]:.2e}"
+    )
+
+    assert history_prb[-1] < ERROR_THRESHOLD, (
+        f"Probe did not converge "
+        f"(device={device}, schedule={schedule}): "
+        f"final MSE={history_prb[-1]:.2e}"
+    )
 
     obj_est = g.get_wave("object").compute_belief().data
     prb_est = g.get_wave("probe").compute_belief().data
