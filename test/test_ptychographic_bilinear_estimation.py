@@ -188,8 +188,8 @@ def test_blind_ptychography_end_to_end(device, schedule):
         f"final MSE={history_prb[-1]:.2e}"
     )
 
-    obj_est = g.get_wave("object").compute_belief().data
-    prb_est = g.get_wave("probe").compute_belief().data
+    obj_est = g["object"]["mean"]
+    prb_est = g["probe"]["variance"]
 
     assert obj_est.shape == (1, *OBJ_SHAPE)
     assert prb_est.shape == (1, *PRB_SHAPE)

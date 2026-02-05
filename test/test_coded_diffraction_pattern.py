@@ -114,5 +114,5 @@ def test_coded_diffraction_model_reconstruction(device, schedule):
     # ------------------------------------------------------------
     # 6. Final estimate sanity check
     # ------------------------------------------------------------
-    est = g.get_wave("obj").compute_belief().data
+    est = g["obj"]["precision"]
     assert est.shape == (1, *shape)

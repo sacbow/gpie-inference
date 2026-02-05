@@ -80,6 +80,9 @@ class GaussianPrior(Prior):
         if self.const_msg is not None:
             self.const_msg.to_backend()
 
+        if self._manual_init_msg is not None:
+            self._manual_init_msg.to_backend()
+
     # -----------------------------------------------------------
     # Constant message construction
     # -----------------------------------------------------------

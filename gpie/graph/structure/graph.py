@@ -4,6 +4,7 @@ from ...core.backend import np
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.types import PrecisionMode
 from ...core.rng_utils import get_rng
+from .wave_view import WaveView
 import contextlib
 import threading
 from typing import Literal, Optional, Callable
@@ -564,3 +565,10 @@ class Graph:
         ):
         from .visualization import visualize_graph
         return visualize_graph(self, backend=backend, layout=layout, output_path=output_path)
+    
+
+    def __getitem__(self, key: str):
+        wave = self.get_wave(key)
+        if wave is None:
+            raise KeyError(f"No wave named '{key}'")
+        return WaveView(wave)

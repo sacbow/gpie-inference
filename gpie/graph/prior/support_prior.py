@@ -148,6 +148,8 @@ class SupportPrior(Prior):
         self.support = move_array_to_current_backend(self.support, dtype=bool)
         self.const_msg = self._create_fixed_array(self.dtype)
         self.dtype = self.const_msg.dtype
+        if self._manual_init_msg is not None:
+            self._manual_init_msg.to_backend()
 
     # ----------------------------------------------------------
     # Representation
