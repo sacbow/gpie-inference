@@ -4,6 +4,8 @@ from ...core.backend import np
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.types import PrecisionMode
 from ...core.rng_utils import get_rng
+from ...core.backend import set_backend
+from ...core.fft import set_fft_backend, get_fft_backend
 from .wave_view import WaveView
 import contextlib
 import threading
@@ -342,6 +344,8 @@ class Graph:
         schedule: Literal["parallel", "sequential"] = "parallel",
         block_size: Optional[int] = 1,
         device: Literal["cpu", "cuda"] = "cpu",
+        fft_engine: Literal["numpy", "cupy", "fftw"] | None = None,
+        fft_kwargs: Optional[dict] = None,
         callback: Optional[Callable[["Graph", int], None]] = None,
         verbose: bool = False,
     ) -> None:
@@ -410,18 +414,26 @@ class Graph:
         # Always restore to CPU at the end of this method (even on exceptions)
         exec_backend = _select_backend(device)
 
+        #fft backend within Inference Session
+        if fft_kwargs is None:
+            fft_kwargs = {}
+        if fft_engine is None:
+            fft_engine = "cupy" if device == "cuda" else "numpy"
+        if device == "cuda" and fft_engine != "cupy":
+            raise ValueError("fft engine is not compatible with array backend")
+
         try:
             # ------------------------------
             # Enter inference session: switch backend + move graph state
             # ------------------------------
             set_backend(exec_backend)
             self.to_backend()
-
-            B = self._full_batch_size
+            set_fft_backend(fft_engine, **fft_kwargs)
 
             # ------------------------------
             # Build block schedule
             # ------------------------------
+            B = self._full_batch_size
             if schedule == "parallel" or block_size is None or block_size >= B:
                 blocks = [None]
             else:
@@ -464,6 +476,7 @@ class Graph:
             # ------------------------------
             # Exit inference session: ALWAYS restore CPU backend + move state back
             # ------------------------------
+            set_fft_backend("numpy")
             set_backend(_np)
             self.to_backend()
 
