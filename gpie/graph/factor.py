@@ -229,6 +229,24 @@ class Factor(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} does not implement `get_sample_for_output()`.")
     
-    #override if necessary
-    def to_backend(self):
-        pass
+    def to_backend(self) -> None:
+        """
+        Move all cached UncertainArray objects owned by this factor
+        to the current backend.
+        """
+        # Input messages
+        for msg in self.input_messages.values():
+            if msg is not None:
+                msg.to_backend()
+
+        # Output message
+        if self.output_message is not None:
+            self.output_message.to_backend()
+
+        # Cached forward/backward messages
+        if self.last_forward_message is not None:
+            self.last_forward_message.to_backend()
+
+        for msg in self.last_backward_messages.values():
+            if msg is not None:
+                msg.to_backend()

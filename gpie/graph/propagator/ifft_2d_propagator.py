@@ -54,12 +54,6 @@ class IFFT2DPropagator(UnitaryPropagator):
             dtype=dtype,
         )
 
-    def to_backend(self):
-        """
-        Synchronize dtype with the current backend (NumPy/CuPy).
-        """
-        self.dtype = np().dtype(self.dtype)
-
     # ------------------------------------------------------------------
     # UnitaryPropagator hooks
     # ------------------------------------------------------------------

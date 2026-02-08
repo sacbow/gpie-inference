@@ -32,29 +32,21 @@ def build_holography_graph(H=512, W=512, noise=1e-4,
     """
     Construct the holography graph from either real image or random data.
     """
-    rng = np.random.default_rng(seed=42)
-
+    # ref image
     support_x = circular_aperture((H, W), radius=ref_radius, center=(-0.2, -0.2))
+    amp_x = load_sample_image(ref_image, shape=(H, W))
+    data_x = amp_x.astype(np.complex64) * support_x
 
-    if ref_image:
-        amp = load_sample_image(ref_image, shape=(H, W))
-        data_x = amp.astype(np.complex64) * support_x  
-    else:
-        data_x = masked_random_array(support_x, dtype=np.complex64, rng=rng)
-
+    # image to estimate
     support_y = circular_aperture((H, W), radius=obj_radius, center=(0.2, 0.2))
-    if obj_image:
-        amp = load_sample_image(obj_image, shape=(H, W))
-        data_y = amp.astype(np.complex64) * support_y
-    else:
-        data_y = masked_random_array(support_y, dtype=np.complex64, rng=rng)
-
+    amp_y = load_sample_image(obj_image, shape=(H, W))
+    data_y = amp_y.astype(np.complex64) * support_y
 
     # Construct graph
     g = holography(support = support_y, var = noise, ref_wave = data_x)
-    g.set_init_rng(np.random.default_rng(11))
-    g.get_wave("obj").set_sample(data_y)  # Inject ground truth
-    g.generate_sample(rng=np.random.default_rng(9), update_observed=True)
+
+    g.set_sample("obj", data_y)  # Inject ground truth
+    g.generate_observations(rng=np.random.default_rng(9)) #RNG for random noise
     return g, data_x, data_y
 
 
@@ -64,24 +56,22 @@ def run_holography(n_iter=100, obj_image=None, ref_image=None,
     """
     Run EP inference and save result images and convergence curve.
     """
-    g, ref_sample, true_obj = build_holography_graph(obj_image=obj_image,
-                                         ref_image=ref_image,
-                                         obj_radius=obj_radius,
-                                         ref_radius=ref_radius)
-    obj_wave = g.get_wave("obj")
+    g, ref_sample, true_obj = build_holography_graph(obj_image=obj_image, ref_image=ref_image, obj_radius=obj_radius, ref_radius=ref_radius)
     pse_list = []
 
     def monitor(graph, t):
         if t % 10 == 0 or t == n_iter - 1:
-            est = graph.get_wave("obj").compute_belief().data
-            err = mse(est, true_obj)
+            est = graph["obj"]["mean"] #posterior mean at iteration t
+            gt = graph["obj"]["sample"] #ground truth
+            err = mse(est, gt)
             pse_list.append(err)
             print(f"[t={t}] PSE = {err:.5e}")
 
+    g.set_init_rng(np.random.default_rng(11)) #RNG for message initialization
     g.run(n_iter=n_iter, callback=monitor)
 
     # Save output images
-    est = obj_wave.compute_belief().data[0]
+    est = g["obj"]["mean"][0]
     amp = np.abs(est)
     phase = np.angle(est) * (np.abs(true_obj) > 1e-5)
 
@@ -124,8 +114,8 @@ def run_holography(n_iter=100, obj_image=None, ref_image=None,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Inline holography EP experiment")
-    parser.add_argument("--obj-img", type=str, default=None, help="Name of object image from skimage.data")
-    parser.add_argument("--ref-img", type=str, default=None, help="Name of reference image from skimage.data")
+    parser.add_argument("--obj-img", type=str, default="camera", help="Name of object image from skimage.data")
+    parser.add_argument("--ref-img", type=str, default="camera", help="Name of reference image from skimage.data")
     parser.add_argument("--obj-radius", type=float, default=0.1, help="Radius of object support (if not using image)")
     parser.add_argument("--ref-radius", type=float, default=0.1, help="Radius of reference support (if not using image)")
     parser.add_argument("--n-iter", type=int, default=100, help="Number of EP iterations")

@@ -2,7 +2,7 @@ from __future__ import annotations
 import warnings
 from typing import Optional, TYPE_CHECKING, Any, List
 from ..core.rng_utils import get_rng
-from ..core.backend import np
+from ..core.backend import np, move_array_to_current_backend
 from ..core.types import ArrayLike, PrecisionMode, Precision
 from ..core.linalg_utils import reduce_precision_to_scalar, random_normal_array
 from numpy.typing import NDArray
@@ -158,6 +158,10 @@ class Wave:
         # Convert parent message if it exists
         if self.parent_message is not None:
             self.parent_message.to_backend()
+        
+        #send sample to device
+        if self._sample is not None:
+            self._sample = move_array_to_current_backend(self._sample)
 
 
     def set_label(self, label: str) -> None:
@@ -523,21 +527,26 @@ class Wave:
         return self.__add__(other)
 
 
-    def __mul__(self, other) -> Wave:
+    def __mul__(self, other) -> "Wave":
         """
         Overloaded elementwise multiplication.
 
         Supports:
             - Wave * Wave → MultiplyPropagator
-            - Wave * ndarray/scalar → MultiplyConstPropagator
+            - Wave * ndarray / scalar / array-like → MultiplyConstPropagator
+
         Includes implicit replicate() if batch sizes differ.
         """
+        import numpy as _np
         from .propagator.multiply_const_propagator import MultiplyConstPropagator
         from .propagator.multiply_propagator import MultiplyPropagator
         from .shortcuts import replicate
+        from .wave import Wave
 
+        # ------------------------------------------------------------
+        # Case 1: Wave * Wave
+        # ------------------------------------------------------------
         if isinstance(other, Wave):
-            # --- handle batch mismatch ---
             if self.batch_size != other.batch_size:
                 if self.batch_size == 1:
                     self = replicate(self, batch_size=other.batch_size)
@@ -550,10 +559,16 @@ class Wave:
                     )
             return MultiplyPropagator() @ (self, other)
 
-        elif isinstance(other, (int, float, complex, np().ndarray)):
-            return MultiplyConstPropagator(other) @ self
+        # ------------------------------------------------------------
+        # Case 2: Wave * constant (scalar / ndarray / array-like)
+        # ------------------------------------------------------------
+        try:
+            # Try to coerce to ndarray (this catches list, tuple, etc.)
+            const = _np.asarray(other)
+        except Exception:
+            return NotImplemented
 
-        return NotImplemented
+        return MultiplyConstPropagator(const) @ self
 
 
     def __rmul__(self, other) -> Wave:

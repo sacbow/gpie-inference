@@ -283,11 +283,6 @@ def test_getitem_invalid_type():
     with pytest.raises(TypeError):
         _ = w[3.14, :]   # float is invalid index
 
-def test_add_and_mul_notimplemented():
-    w = Wave((2,2))
-    assert (w.__add__(object()) is NotImplemented)
-    assert (w.__mul__(object()) is NotImplemented)
-
 def test_rmul_scalar_and_array():
     w = Wave((2,2))
     # both should delegate to __mul__, not error

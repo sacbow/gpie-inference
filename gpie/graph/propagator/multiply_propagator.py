@@ -42,6 +42,14 @@ class MultiplyPropagator(BinaryPropagator):
         self.output_belief: Optional[UA] = None
         # Number of inner-loop updates
         self.num_inner_loop = num_inner_loop
+    
+    def to_backend(self):
+        super().to_backend()
+        for b in self.input_beliefs.values():
+            if b is not None:
+                b.to_backend()
+        if self.output_belief is not None:
+            self.output_belief.to_backend()
 
 
     def _set_precision_mode(self, mode: BPM) -> None:

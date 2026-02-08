@@ -1,4 +1,13 @@
 class WaveView:
+    """
+    User-facing view for inspecting a Wave.
+
+    Provides access to:
+        - sample: ground-truth / generative sample (if set)
+        - mean: posterior mean
+        - precision: posterior precision
+        - variance: posterior variance
+    """
     def __init__(self, wave):
         self._wave = wave
         self._belief_cache = None
@@ -28,8 +37,10 @@ class WaveView:
     
 
     def __getitem__(self, key: str):
-        belief = self._belief()
+        if key == "sample":
+            return self._wave.get_sample()
 
+        belief = self._belief()
         if key == "mean":
             return belief.data
         elif key == "variance":
@@ -39,8 +50,8 @@ class WaveView:
         else:
             raise KeyError(
                 f"Unknown attribute '{key}'. "
-                f"Available: mean, variance, precision, std"
+                f"Available: mean, variance, precision, sample"
             )
 
     def keys(self):
-        return ["mean", "variance", "precision"]
+        return ["mean", "variance", "precision", "sample"]

@@ -66,7 +66,7 @@ class PhaseMaskFFTPropagator(UnitaryPropagator):
         """
         Move mask arrays to the current backend and resync dtype.
         """
-        self.dtype = np().dtype(self.dtype)
+        super().to_backend()
         self.phase_mask = move_array_to_current_backend(self.phase_mask, dtype=self.dtype)
         self.phase_mask_conj = self.phase_mask.conj()
 

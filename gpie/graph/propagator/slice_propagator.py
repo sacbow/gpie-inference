@@ -56,7 +56,7 @@ class SlicePropagator(AccumulativePropagator):
         Ensures that this propagator and its associated AccumulativeUncertainArray (AUA)
         remain consistent when switching between NumPy and CuPy backends.
         """
-        # move associated AUA (if initialized)
+        super().to_backend() 
         if self.output_product is not None:
             self.output_product.to_backend()
 

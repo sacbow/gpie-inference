@@ -113,6 +113,7 @@ class MultiplyConstPropagator(Propagator):
 
 
     def to_backend(self):
+        super().to_backend() 
         self.const = move_array_to_current_backend(self.const, dtype=self.const_dtype)
         self.const_dtype = self.const.dtype
         self.support_threshold = move_array_to_current_backend(

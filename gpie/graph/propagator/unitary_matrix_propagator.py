@@ -51,6 +51,7 @@ class UnitaryMatrixPropagator(UnitaryPropagator):
     # Backend handling
     # ------------------------------------------------------------------
     def to_backend(self):
+        super().to_backend()
         self.U = move_array_to_current_backend(self.U, dtype=self.dtype)
         self.Uh = move_array_to_current_backend(self.Uh, dtype=self.dtype)
         self.dtype = np().dtype(self.dtype)

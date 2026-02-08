@@ -53,14 +53,6 @@ class FFT2DPropagator(UnitaryPropagator):
             dtype=dtype,
         )
 
-    def to_backend(self):
-        """
-        Synchronize dtype with the current backend (NumPy/CuPy).
-
-        FFT backend selection is handled by `get_fft_backend()`.
-        """
-        self.dtype = np().dtype(self.dtype)
-
     # ------------------------------------------------------------------
     # UnitaryPropagator hooks
     # ------------------------------------------------------------------

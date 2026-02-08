@@ -495,6 +495,21 @@ class Graph:
             for meas in self._factors:
                 if hasattr(meas, "update_observed_from_sample"):
                     meas.update_observed_from_sample(mask=mask)
+    
+    def generate_observations(self, rng=None, mask=None):
+        """
+        Generate synthetic observations from the current generative model.
+
+        This method:
+            1. Generates latent samples if not already set.
+            2. Generates noisy measurement samples.
+            3. Promotes them to observed data.
+
+        Args:
+            rng: RNG used for sampling.
+            mask: Optional mask applied when updating observed data.
+        """
+        self.generate_sample(rng=rng, update_observed=True, mask=mask)
 
 
 
@@ -572,3 +587,9 @@ class Graph:
         if wave is None:
             raise KeyError(f"No wave named '{key}'")
         return WaveView(wave)
+    
+    def set_sample(self, name: str, value):
+        wave = self.get_wave(name)
+        if wave is None:
+            raise KeyError(f"No wave named '{name}'")
+        wave.set_sample(value)

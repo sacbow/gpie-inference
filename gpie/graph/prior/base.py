@@ -301,3 +301,9 @@ class Prior(Factor, ABC):
     def _compute_message(self, incoming: UncertainArray) -> UncertainArray:
         """Compute the message based on incoming observation (used in structured priors)."""
         pass
+
+    def to_backend(self) -> None:
+        """Move internal UA to the current backend."""
+        super().to_backend()
+        if self._manual_init_msg is not None:
+            self._manual_init_msg.to_backend()

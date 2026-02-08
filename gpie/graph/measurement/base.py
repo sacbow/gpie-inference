@@ -203,6 +203,7 @@ class Measurement(Factor, ABC):
 
         This ensures consistency when switching between NumPy/CuPy.
         """
+        super().to_backend()
         if self.observed is not None:
             self.observed.to_backend()
 

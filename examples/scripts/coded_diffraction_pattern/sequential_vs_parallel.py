@@ -1,181 +1,253 @@
 import argparse
+import os
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 
-from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse, replicate
-from gpie.core.linalg_utils import random_normal_array
-from gpie.core.rng_utils import get_rng
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+from gpie import (
+    model,
+    GaussianPrior,
+    fft2,
+    AmplitudeMeasurement,
+    pmse,
+    replicate,
+)
+from gpie.core.linalg_utils import random_phase_mask
 
 # ------------------------------------------------------------
-# CDP model definition
+# Paths
+# ------------------------------------------------------------
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+RESULTS_DIR = os.path.join(CURRENT_DIR, "results_sequential_vs_parallel")
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+# ------------------------------------------------------------
+# Model definition
 # ------------------------------------------------------------
 
 @model
-def coded_diffraction_model(var, masks, damping, dtype=np.complex64):
-    """
-    Coded diffraction pattern model for scheduling comparison.
+def coded_diffraction_pattern(shape, n_measurements, phase_masks, noise):
+    x = ~GaussianPrior(
+        event_shape=shape,
+        label="object",
+        dtype=np.complex64,
+    )
 
-    Args:
-        var: Noise variance
-        masks: ndarray of shape (B, H, W)
-        damping: "auto" or float
-        dtype: Complex dtype
-    """
-    B, H, W = masks.shape
+    x_batch = replicate(x, batch_size=n_measurements)
+    y = fft2(phase_masks * x_batch)
 
-    # Prior (single latent image)
-    x = ~GaussianPrior(event_shape=(H, W), label="obj", dtype=dtype)
-
-    # Replicate across batch dimension
-    x_batch = replicate(x, batch_size=B)
-
-    # Apply masks and FFT
-    y = fft2(masks * x_batch)
-
-    # Amplitude measurement
-    AmplitudeMeasurement(var=var, damping=damping) << y
+    AmplitudeMeasurement(var=noise) << y
 
 
 # ------------------------------------------------------------
-# Single trial runner
+# Graph construction
 # ------------------------------------------------------------
 
-def run_single_trial(
+def build_graph(
+    shape,
+    n_measurements,
+    noise,
+    rng_model,
+    rng_data,
+):
+    phase_masks = random_phase_mask(
+        (n_measurements, *shape),
+        rng=rng_model,
+        dtype=np.complex64,
+    )
+
+    g = coded_diffraction_pattern(
+        shape=shape,
+        n_measurements=n_measurements,
+        phase_masks=phase_masks,
+        noise=noise,
+    )
+
+    # ground truth object
+    amp = np.ones(shape, dtype=np.float32)
+    phase = rng_model.uniform(0.0, 2.0 * np.pi, size=shape)
+    x_true = amp * np.exp(1j * phase)
+
+    g.set_sample("object", x_true.astype(np.complex64))
+    g.generate_observations(rng=rng_data)
+
+    return g
+
+
+# ------------------------------------------------------------
+# Single run
+# ------------------------------------------------------------
+
+def run_single(
+    *,
     schedule,
-    seed,
+    block_size,
     n_iter,
     shape,
     n_measurements,
     noise,
-    block_size,
-    damping,
+    seed,
+    device,
 ):
-    """
-    Run one CDP reconstruction trial and return PMSE history.
-    """
-    rng = get_rng(seed)
+    rng_model = np.random.default_rng(seed)
+    rng_data = np.random.default_rng(seed + 1)
+    rng_init = np.random.default_rng(seed + 2)
 
-    # Ground-truth object
-    true_obj = random_normal_array(
-        (1, *shape),
-        dtype=np.complex64,
-        rng=rng,
+    g = build_graph(
+        shape=shape,
+        n_measurements=n_measurements,
+        noise=noise,
+        rng_model=rng_model,
+        rng_data=rng_data,
     )
 
-    # Random phase masks
-    masks = random_normal_array(
-        (n_measurements, *shape),
-        dtype=np.complex64,
-        rng=rng,
-    )
-
-    # Build graph
-    g = coded_diffraction_model(
-        var=noise,
-        masks=masks,
-        damping=damping,
-        dtype=np.complex64,
-    )
-
-    g.set_init_rng(get_rng(seed + 1))
-
-    # Inject true sample and generate observations
-    g.get_wave("obj").set_sample(true_obj)
-    g.generate_sample(rng=get_rng(seed + 2), update_observed=True)
-
-    pmse_history = []
+    history = []
 
     def monitor(graph, t):
-        est = graph.get_wave("obj").compute_belief().data
-        err = pmse(est, true_obj)
-        pmse_history.append(err)
+        est = graph["object"]["mean"]
+        gt = graph["object"]["sample"]
+        history.append(pmse(est, gt))
+
+    g.set_init_rng(rng_init)
 
     g.run(
         n_iter=n_iter,
         schedule=schedule,
         block_size=block_size,
+        device=device,
         callback=monitor,
     )
 
-    return np.array(pmse_history)
+    return np.asarray(history)
 
 
 # ------------------------------------------------------------
-# Experiment runner
+# Multi-trial experiment
 # ------------------------------------------------------------
 
-def run_experiment(
-    n_trials=10,
-    n_iter=200,
-    shape=(64, 64),
-    n_measurements=4,
-    noise=1e-4,
-    block_size=1,
-    damping="auto",
-    output_dir="results",
-):
-    output_dir = os.path.join(SCRIPT_DIR, output_dir)
-    os.makedirs(output_dir, exist_ok=True)
+import time
 
-    schedules = ["parallel", "sequential"]
-    histories = {s: [] for s in schedules}
+import time
 
-    base_seed = 1000
+def run_trials(
+    *,
+    n_trials,
+    schedule,
+    block_size,
+    base_seed,
+    **kwargs,
+    ):
+    all_histories = []
 
-    for trial in range(n_trials):
-        seed = base_seed + trial
-        print(f"Trial {trial + 1}/{n_trials} (seed={seed})")
+    for k in range(n_trials):
+        seed = base_seed + 1000 * k
 
-        for schedule in schedules:
-            hist = run_single_trial(
-                schedule=schedule,
-                seed=seed,
-                n_iter=n_iter,
-                shape=shape,
-                n_measurements=n_measurements,
-                noise=noise,
-                block_size=block_size,
-                damping=damping,
-            )
-            histories[schedule].append(hist)
+        print(
+            f"[Trial {k+1:02d}/{n_trials}] "
+            f"schedule={schedule}, block_size={block_size}, seed={seed}"
+        )
 
-    # Convert to arrays: shape (n_trials, n_iter)
-    for k in histories:
-        histories[k] = np.stack(histories[k], axis=0)
+        t0 = time.time()
+
+        hist = run_single(
+            schedule=schedule,
+            block_size=block_size,
+            seed=seed,        
+            **kwargs,
+        )
+
+        elapsed = time.time() - t0
+
+        print(
+            f"  -> done in {elapsed:.2f} s "
+            f"(final PMSE = {hist[-1]:.3e})"
+        )
+
+        all_histories.append(hist)
+
+    return np.stack(all_histories, axis=0)
+
+
+# ------------------------------------------------------------
+# Statistics helper
+# ------------------------------------------------------------
+
+def summarize(histories):
+    median = np.median(histories, axis=0)
+    q1 = np.percentile(histories, 25, axis=0)
+    q3 = np.percentile(histories, 75, axis=0)
+    return median, q1, q3
+
+
+# ------------------------------------------------------------
+# Main
+# ------------------------------------------------------------
+
+def main(args):
+    shape = (args.size, args.size)
+
+    common_kwargs = dict(
+        n_iter=args.n_iter,
+        shape=shape,
+        n_measurements=args.measurements,
+        noise=args.noise,
+        device=args.device,
+    )
+
+    hist_parallel = run_trials(
+        n_trials=args.trials,
+        schedule="parallel",
+        block_size=None,
+        base_seed = args.seed,
+        **common_kwargs,
+    )
+
+    hist_sequential = run_trials(
+        n_trials=args.trials,
+        schedule="sequential",
+        block_size=args.block_size,
+        base_seed = args.seed,
+        **common_kwargs,
+    )
+
+    med_p, q1_p, q3_p = summarize(hist_parallel)
+    med_s, q1_s, q3_s = summarize(hist_sequential)
 
     # --------------------------------------------------------
-    # Plot statistics
+    # Save raw data
     # --------------------------------------------------------
 
-    iters = np.arange(n_iter)
+    np.save(os.path.join(RESULTS_DIR, "pmse_parallel_trials.npy"), hist_parallel)
+    np.save(os.path.join(RESULTS_DIR, "pmse_sequential_trials.npy"), hist_sequential)
 
-    plt.figure(figsize=(7, 5))
+    # --------------------------------------------------------
+    # Plot
+    # --------------------------------------------------------
 
-    for schedule, color in zip(schedules, ["tab:blue", "tab:orange"]):
-        data = histories[schedule]
+    it = np.arange(args.n_iter)
 
-        median = np.median(data, axis=0)
-        q1 = np.percentile(data, 25, axis=0)
-        q3 = np.percentile(data, 75, axis=0)
+    plt.figure(figsize=(6, 4))
 
-        plt.plot(iters, median, label=schedule, color=color)
-        plt.fill_between(iters, q1, q3, color=color, alpha=0.25)
+    plt.plot(it, med_p, label="parallel", linewidth=2)
+    plt.fill_between(it, q1_p, q3_p, alpha=0.2)
+
+    plt.plot(it, med_s, label=f"sequential", linewidth=2)
+    plt.fill_between(it, q1_s, q3_s, alpha=0.2)
 
     plt.yscale("log")
     plt.xlabel("Iteration")
     plt.ylabel("PMSE")
-    plt.title("Sequential vs Parallel Scheduling (CDP)")
+    plt.title(f"Sequential vs Parallel EP (median ± IQR, trials={args.trials})")
     plt.legend()
     plt.grid(True)
+    plt.tight_layout()
 
-    out_path = os.path.join(output_dir, "sequential_vs_parallel.png")
-    plt.savefig(out_path, dpi=150)
+    out_path = os.path.join(RESULTS_DIR, "convergence_median_iqr.png")
+    plt.savefig(out_path)
     plt.close()
 
-    print(f"Saved figure to {out_path}")
+    print("Benchmark finished.")
+    print(f"Results saved to: {RESULTS_DIR}")
 
 
 # ------------------------------------------------------------
@@ -184,32 +256,20 @@ def run_experiment(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Sequential vs Parallel scheduling benchmark (CDP)"
+        description="Sequential vs parallel EP convergence (median + IQR)"
     )
-
+    parser.add_argument("--n-iter", type=int, default=500)
     parser.add_argument("--trials", type=int, default=10)
-    parser.add_argument("--n-iter", type=int, default=200)
-    parser.add_argument("--size", type=int, default=256)
+    parser.add_argument("--size", type=int, default=128)
     parser.add_argument("--measurements", type=int, default=3)
-    parser.add_argument("--noise", type=float, default=1e-3)
+    parser.add_argument("--noise", type=float, default=1e-4)
     parser.add_argument("--block-size", type=int, default=1)
-    parser.add_argument("--damping", type=str, default=0.5)
-    parser.add_argument("--output-dir", type=str, default="results")
+    parser.add_argument("--seed", type=int, default=99)
+    parser.add_argument(
+        "--device",
+        choices=["cpu", "cuda"],
+        default="cpu",
+    )
 
     args = parser.parse_args()
-
-    try:
-        damping_value = float(args.damping)
-    except ValueError:
-        damping_value = args.damping
-
-    run_experiment(
-        n_trials=args.trials,
-        n_iter=args.n_iter,
-        shape=(args.size, args.size),
-        n_measurements=args.measurements,
-        noise=args.noise,
-        block_size=args.block_size,
-        damping=damping_value,
-        output_dir=args.output_dir,
-    )
+    main(args)

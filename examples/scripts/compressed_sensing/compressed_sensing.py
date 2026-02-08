@@ -42,9 +42,9 @@ def build_compressed_sensing_graph(shape, rho=0.1, var=1e-4, subsample_ratio=0.3
         GaussianMeasurement(var=var, with_mask = True) << fft2(x)
 
     g = compressed_sensing(rho = rho, shape = shape, var = var, mask = mask)
-    g.set_init_rng(np.random.default_rng(seed=1))
-    g.get_wave("x").set_sample(sparse_img)
-    g.generate_sample(rng=np.random.default_rng(seed=9), update_observed=True, mask = mask)
+
+    g.set_sample("x", sparse_img)
+    g.generate_observations(rng=np.random.default_rng(seed=9), mask = mask)
     return g, sparse_img
 
 
@@ -56,14 +56,16 @@ def run_cs(n_iter=100, rho=0.1, size=512, subsample_rate=0.3, image_name="camera
 
     def monitor(graph, t):
         if t % 10 == 0 or t == n_iter - 1:
-            est = graph.get_wave("x").compute_belief().data
-            err = mse(est, true_x)
+            est = graph["x"]["mean"]
+            gt = graph["x"]["sample"]
+            err = mse(est, gt)
             mse_list.append(err)
             print(f"[t={t}] MSE = {err:.5e}")
 
+    g.set_init_rng(np.random.default_rng(seed=1))
     g.run(n_iter=n_iter, callback=monitor)
 
-    est_x = g.get_wave("x").compute_belief().data[0]
+    est_x = g["x"]["mean"][0]
     est_img = est_x.reshape((size, size)).real
 
     # Save images

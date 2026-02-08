@@ -19,6 +19,7 @@ class AddConstPropagator(Propagator):
         self._init_rng = None
 
     def to_backend(self):
+        super().to_backend() 
         self.const = move_array_to_current_backend(self.const, dtype=self.const_dtype)
         self.const_dtype = self.const.dtype
 

@@ -48,6 +48,16 @@ class UnitaryPropagator(Propagator, ABC):
         self.x_belief: Optional[UA] = None
         self.y_belief: Optional[UA] = None
 
+    def to_backend(self) -> None:
+        super().to_backend()
+
+        if self.x_belief is not None:
+            self.x_belief.to_backend()
+
+        if self.y_belief is not None:
+            self.y_belief.to_backend()
+
+
     # ============================================================
     # Precision-mode restriction (common to unitary family)
     # ============================================================
@@ -269,6 +279,7 @@ class UnitaryPropagator(Propagator, ABC):
             msg_block (UA): message restricted to the given block
         """
 
+
         msg_x = inputs["input"]
         out_msg = self.output_message
         yb = self.y_belief
@@ -285,6 +296,7 @@ class UnitaryPropagator(Propagator, ABC):
         # Steady-state EP update
         out_msg_blk = out_msg.extract_block(block)
         yb_blk = yb.extract_block(block)
+
         return yb_blk / out_msg_blk
 
     def _compute_backward(self, output_msg, exclude, block=None):

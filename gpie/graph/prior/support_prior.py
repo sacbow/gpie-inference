@@ -145,6 +145,7 @@ class SupportPrior(Prior):
         """
         Convert internal arrays to the active backend.
         """
+        super().to_backend() 
         self.support = move_array_to_current_backend(self.support, dtype=bool)
         self.const_msg = self._create_fixed_array(self.dtype)
         self.dtype = self.const_msg.dtype

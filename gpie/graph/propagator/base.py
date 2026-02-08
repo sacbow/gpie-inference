@@ -37,6 +37,7 @@ class Propagator(Factor, ABC):
     # Backend
     # ------------------------------------------------------------------
     def to_backend(self) -> None:
+        super().to_backend()
         current_backend = np()
         if self.dtype is not None:
             self.dtype = current_backend.dtype(self.dtype)

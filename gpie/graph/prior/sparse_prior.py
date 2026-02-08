@@ -78,11 +78,6 @@ class SparsePrior(Prior):
             self._adaptive = False
             self.damping = real_dtype(damping)
 
-    def to_backend(self) -> None:
-        """Move internal UA to the current backend."""
-        if self._manual_init_msg is not None:
-            self._manual_init_msg.to_backend()
-
     # ------------------------------------------------------------------
     # Core EP message computation (block-wise)
     # ------------------------------------------------------------------

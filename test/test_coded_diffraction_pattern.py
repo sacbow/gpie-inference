@@ -82,15 +82,13 @@ def test_coded_diffraction_model_reconstruction(device, schedule):
     history = []
 
     def monitor(graph, t):
-        est = graph.get_wave("obj").compute_belief().data
+        est = graph["obj"]["mean"]
         err = pmse(est, true_obj)
-
         # cupy scalar → Python float
         if device == "cuda":
             err = float(cp.asnumpy(err))
         else:
             err = float(err)
-
         history.append(err)
 
     g.run(
