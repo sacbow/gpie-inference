@@ -1,12 +1,17 @@
 import argparse
-import os
 import numpy as np
 
-from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse, replicate
+from gpie import (
+    model,
+    GaussianPrior,
+    fft2,
+    AmplitudeMeasurement,
+    pmse,
+    replicate,
+)
 from gpie.core.linalg_utils import random_phase_mask
-from gpie.core.rng_utils import get_rng
 
-from benchmark_utils import run_with_timer, profile_with_cprofile
+from benchmark_utils import IterationTimer, IterationProfiler, resolve_fft_engine
 
 
 # ------------------------------------------------------------
@@ -14,47 +19,41 @@ from benchmark_utils import run_with_timer, profile_with_cprofile
 # ------------------------------------------------------------
 
 @model
-def coded_diffraction_pattern(
-    *,
-    shape: tuple[int, int],
-    n_measurements: int,
-    phase_masks: np.ndarray,
-    noise: float,
-    damping: float,
-):
+def coded_diffraction_pattern(shape, n_measurements, phase_masks, noise):
     """
-    Fork-based coded diffraction pattern model (batched).
-    phase_masks: ndarray with shape (B, H, W) on CPU at model-build time.
+    Coded diffraction pattern (CDP), batched measurements via replicate().
+
+    phase_masks: ndarray of shape (B, H, W) on CPU at model-build time.
     """
-    x = ~GaussianPrior(event_shape=shape, label="object", dtype=np.complex64)
+    x = ~GaussianPrior(
+        event_shape=shape,
+        label="object",
+        dtype=np.complex64,
+    )
+
     x_batch = replicate(x, batch_size=n_measurements)
     y = fft2(phase_masks * x_batch)
-    AmplitudeMeasurement(var=noise, damping=damping) << y
+
+    AmplitudeMeasurement(var=noise) << y
 
 
 # ------------------------------------------------------------
-# Graph construction (CPU-side)
+# Helpers
 # ------------------------------------------------------------
+
 
 def build_cdp_graph(
     *,
     size: int,
     n_measurements: int,
     noise: float,
-    damping: float,
-    seed_model: int,
-    seed_data: int,
+    seed: int,
 ):
-    """
-    Build a CDP graph on CPU (NumPy). Observations are generated on CPU.
-    The graph is later executed by Graph.run(), which manages device/FFT backends.
-    """
-    rng_model = get_rng(seed=seed_model)
-    rng_data = get_rng(seed=seed_data)
+    rng_model = np.random.default_rng(seed)
+    rng_data = np.random.default_rng(seed + 1)
 
     shape = (size, size)
 
-    # Batched random phase masks (CPU)
     phase_masks = random_phase_mask(
         (n_measurements, *shape),
         rng=rng_model,
@@ -66,191 +65,202 @@ def build_cdp_graph(
         n_measurements=n_measurements,
         phase_masks=phase_masks,
         noise=noise,
-        damping=damping,
     )
 
-    # Ground truth object (unit amplitude + random phase)
-    phase = rng_model.uniform(0.0, 2.0 * np.pi, size=shape)
-    x_true = np.exp(1j * phase).astype(np.complex64)
+    # Ground truth object
+    amp = np.ones(shape, dtype=np.float32)
+    phase = rng_model.uniform(0.0, 2.0 * np.pi, size=shape).astype(np.float32)
+    x_true = amp * np.exp(1j * phase)
 
-    g.set_sample("object", x_true)
+    g.set_sample("object", x_true.astype(np.complex64))
     g.generate_observations(rng=rng_data)
 
     return g
 
 
-# ------------------------------------------------------------
-# Benchmark runner
-# ------------------------------------------------------------
-
 def run_cdp_benchmark(
     *,
-    n_iter: int,
     size: int,
+    n_iter: int,
     n_measurements: int,
     noise: float,
-    damping: float,
+    seed: int,
     device: str,
+    fft_engine: str | None,
     schedule: str,
     block_size: int | None,
-    fft_engine: str | None,
-    fft_threads: int,
-    fft_planner_effort: str,
-    seed: int,
     verbose: bool,
+    eval_pmse: bool,
+    profile: bool,
+    profile_iter: int,
+    profile_sort: str,
+    profile_limit: int,
 ):
-    """
-    Build a CDP graph (CPU), then run EP inference with the requested execution settings.
-    """
-
-    # Separate seeds for reproducibility
-    seed_model = seed
-    seed_data = seed + 1
-    seed_init = seed + 2
-
     g = build_cdp_graph(
         size=size,
         n_measurements=n_measurements,
         noise=noise,
-        damping=damping,
-        seed_model=seed_model,
-        seed_data=seed_data,
+        seed=seed,
     )
 
-    # Cache ground truth (CPU-side)
-    true_x = g["object"]["sample"]
+    # IMPORTANT: set init rng right before run()
+    g.set_init_rng(np.random.default_rng(99))
 
-    # RNG for message initialization
-    g.set_init_rng(get_rng(seed=seed_init))
+    timer = IterationTimer(sync_gpu=(device == "cuda"))
+    hooks = [timer]
 
-    def monitor(graph, t: int):
-        if not verbose:
-            return
-        if t % 10 == 0 or t == n_iter - 1:
+    if profile:
+        hooks.append(
+            IterationProfiler(
+                target_iter=profile_iter,
+                sort=profile_sort,
+                limit=profile_limit,
+                sync_gpu=(device == "cuda"),
+            )
+        )
+
+    def combined_hook(graph, t: int, phase: str):
+        for h in hooks:
+            h(graph, t, phase)
+
+    if eval_pmse:
+        pmse_hist = []
+        gt = g["object"]["sample"]
+
+        def monitor(graph, t: int):
             est = graph["object"]["mean"]
-            err = pmse(est, true_x)
-            print(f"[t={t:4d}] PMSE = {err:.5e}")
+            pmse_hist.append(float(pmse(est, gt)))
 
-    # FFT kwargs (only used when fft_engine="fftw"; safe to pass generally)
-    fft_kwargs = {"threads": fft_threads, "planner_effort": fft_planner_effort}
+    else:
+        pmse_hist = None
+        monitor = None
 
     g.run(
         n_iter=n_iter,
-        device=device,
         schedule=schedule,
         block_size=block_size,
+        device=device,
         fft_engine=fft_engine,
-        fft_kwargs=fft_kwargs,
+        iteration_hook=combined_hook,
         callback=monitor,
-        verbose=False,  # benchmark should avoid tqdm overhead by default
+        verbose=verbose,
     )
+
+    times = np.asarray(timer.times)
+
+    return {
+        "mean": float(times.mean()),
+        "median": float(np.median(times)),
+        "min": float(times.min()),
+        "max": float(times.max()),
+        "all": times,
+        "pmse_hist": pmse_hist,
+    }
 
 
 # ------------------------------------------------------------
 # CLI
 # ------------------------------------------------------------
 
-def _parse_args():
-    p = argparse.ArgumentParser(
-        description="Profiling benchmark: coded diffraction pattern (gPIE 0.3.1+ session run)"
+def main():
+    parser = argparse.ArgumentParser(
+        description="CDP iteration-level benchmark using graph.run hooks"
     )
+    parser.add_argument("--size", type=int, default=512)
+    parser.add_argument("--n-iter", type=int, default=100)
+    parser.add_argument("--noise", type=float, default=1e-4)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--measurements", type=int, default=4)
 
-    # Inference controls
-    p.add_argument("--n-iter", type=int, default=100, help="Number of EP iterations")
-    p.add_argument("--size", type=int, default=512, help="Image size (H=W)")
-    p.add_argument("--measurements", type=int, default=4, help="Number of CDP measurements (batch size)")
-    p.add_argument("--noise", type=float, default=1e-4, help="Amplitude noise variance")
-    p.add_argument("--damping", type=float, default=0.3, help="Manual damping for AmplitudeMeasurement")
-    p.add_argument("--seed", type=int, default=99, help="Base RNG seed")
-
-    # Execution session controls
-    p.add_argument("--device", choices=["cpu", "cuda"], default="cpu", help="Execution device for Graph.run()")
-    p.add_argument(
-        "--schedule",
-        choices=["parallel", "sequential"],
-        default="parallel",
-        help="EP schedule for Graph.run()",
+    parser.add_argument(
+        "--device",
+        choices=["cpu", "cuda"],
+        default="cpu",
     )
-    p.add_argument(
-        "--block-size",
-        type=int,
-        default=1,
-        help="Block size for sequential schedule (ignored for parallel)",
-    )
-
-    # FFT engine (now owned by Graph.run)
-    p.add_argument(
+    parser.add_argument(
         "--fft-engine",
         choices=["numpy", "cupy", "fftw"],
         default=None,
-        help="FFT backend used during Graph.run() inference session (default: device-dependent)",
+        help="If omitted, inferred from device (cpu->numpy, cuda->cupy).",
     )
-    p.add_argument("--fft-threads", type=int, default=1, help="FFTW threads (only meaningful for --fft-engine fftw)")
-    p.add_argument(
-        "--fft-planner-effort",
+
+    parser.add_argument(
+        "--schedule",
+        choices=["parallel", "sequential"],
+        default="parallel",
+    )
+    parser.add_argument(
+        "--block-size",
+        type=int,
+        default=1,
+        help="Used only when schedule=sequential.",
+    )
+
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--eval-pmse",
+        action="store_true",
+        help="Compute PMSE each iteration (adds overhead; not included in iteration_hook timing).",
+    )
+
+    # Profiling options (single iteration)
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Enable cProfile for a single iteration (controlled by --profile-iter).",
+    )
+    parser.add_argument(
+        "--profile-iter",
+        type=int,
+        default=0,
+        help="Iteration index to profile (default: 0).",
+    )
+    parser.add_argument(
+        "--profile-sort",
         type=str,
-        default="FFTW_ESTIMATE",
-        help="FFTW planner effort (only meaningful for --fft-engine fftw)",
+        default="cumtime",
+        help="pstats sort key (e.g., cumtime, tottime).",
+    )
+    parser.add_argument(
+        "--profile-limit",
+        type=int,
+        default=30,
+        help="Number of lines to show in profiler output.",
     )
 
-    # Profiling / logging
-    p.add_argument("--profile", action="store_true", help="Enable cProfile profiling (CPU-side only)")
-    p.add_argument("--verbose", action="store_true", help="Print PMSE every 10 iterations")
+    args = parser.parse_args()
 
-    return p.parse_args()
+    effective_fft_engine = resolve_fft_engine(args.device, args.fft_engine)
 
-
-def main():
-    args = _parse_args()
-
-    # Normalize block_size behavior
-    if args.schedule == "parallel":
-        block_size = None
-    else:
-        block_size = args.block_size
-
-    # Sanity checks for fft_engine
-    if args.device == "cuda" and args.fft_engine == "fftw":
-        raise ValueError("fft_engine='fftw' is not compatible with device='cuda'")
-
-    run_kwargs = dict(
-        n_iter=args.n_iter,
+    result = run_cdp_benchmark(
         size=args.size,
+        n_iter=args.n_iter,
         n_measurements=args.measurements,
         noise=args.noise,
-        damping=args.damping,
-        schedule=args.schedule,
-        block_size=block_size,
-        fft_engine=args.fft_engine,
-        fft_threads=args.fft_threads,
-        fft_planner_effort=args.fft_planner_effort,
         seed=args.seed,
-        verbose=args.verbose,
-    )
-
-    if args.profile:
-        profile_with_cprofile(
-            lambda: run_cdp_benchmark(device=args.device, **run_kwargs)
-        )
-        return
-
-    _, elapsed = run_with_timer(
-        lambda: run_cdp_benchmark(device=args.device, **run_kwargs),
         device=args.device,
-        sync_gpu=True,
+        fft_engine=args.fft_engine,
+        schedule=args.schedule,
+        block_size=args.block_size,
+        verbose=args.verbose,
+        eval_pmse=args.eval_pmse,
+        profile=args.profile,
+        profile_iter=args.profile_iter,
+        profile_sort=args.profile_sort,
+        profile_limit=args.profile_limit,
     )
 
-    fft_engine = args.fft_engine
-    if fft_engine is None:
-        fft_engine = "cupy" if args.device == "cuda" else "numpy"
+    print("=== CDP iteration benchmark ===")
+    print(f"device      : {args.device}")
+    print(f"fft_engine  : {effective_fft_engine}")
+    print(f"schedule    : {args.schedule}")
+    print(f"size        : {args.size}")
+    print(f"iterations  : {args.n_iter}")
+    print("")
 
-    tag = f"device={args.device}, schedule={args.schedule}, fft={fft_engine}"
-    if args.schedule == "sequential":
-        tag += f", block_size={args.block_size}"
-    if fft_engine == "fftw":
-        tag += f", threads={args.fft_threads}, effort={args.fft_planner_effort}"
-
-    print(f"[{tag}] Total time: {elapsed:.3f} s")
+    print(f"median iter : {result['median'] * 1e3:.3f} ms")
+    print(f"mean iter   : {result['mean'] * 1e3:.3f} ms")
+    print(f"min / max   : {result['min'] * 1e3:.3f} / {result['max'] * 1e3:.3f} ms")
 
 
 if __name__ == "__main__":

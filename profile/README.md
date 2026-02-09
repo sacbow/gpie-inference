@@ -1,7 +1,8 @@
 # gPIE Profiling & Benchmarking
 
-This directory contains benchmarking scripts and profiling analyses for evaluating the performance of **gPIE** on various computational imaging models.
+This directory contains **iteration-level benchmarks and profiling utilities** for evaluating the computational performance of **gPIE**.
 
+All benchmarks are designed to measure the **core EP iteration cost**, separating it from one-time overheads such as graph construction, data generation, and device transfer.
 ---
 
 ## File Structure
@@ -11,63 +12,86 @@ profile/
 ├─ benchmark_holography.py # Holography benchmark
 ├─ benchmark_random_cdi.py # Random CDI benchmark
 ├─ benchmark_coded_diffraction_pattern.py # CDP benchmark
-├─ benchmark_ptychography.py # Ptychography benchmark (new)
 └─ README.md # This file                               
 ```
 
+---
+
+## Benchmarking Philosophy
+
+All benchmarks in this directory follow the same principles:
+
+- **Iteration-level timing**
+  - Only the body of one EP iteration is measured
+  - Warm-up, device transfer, FFT plan creation, and RNG setup are excluded
+- **Unified execution path**
+  - All benchmarks use `Graph.run(..., iteration_hook=...)`
+- **Reproducibility**
+  - `g.set_init_rng(np.random.default_rng(99))` is set immediately before `run()`
+- **Device-agnostic design**
+  - CPU / GPU behavior is controlled via `--device`
+  - FFT backend is inferred automatically unless explicitly specified
+
+This makes the results comparable across models, devices, and schedules.
 
 ---
 
 ## Target Models
-We benchmarked four representative computational imaging models implemented in gPIE:
 
-1. **Holography**  
-   - The simplest model, involving two FFTs per iteration.
-2. **Random Structured Matrix CDI**  
-   - A CDI model using multiple phase masks and FFT layers.
-3. **Coded Diffraction Pattern (CDP)**  
-   - A multi-measurement model involving repeated FFTs with coded phase masks.
-4. **Ptychography** *(new)*  
-   - A patch-based inverse problem using overlapping probe positions, modeled by the `SlicePropagator` and `AccumulativeUncertainArray`.
+We benchmark the following representative computational imaging models:
 
----
+1. **Holography**
+   - Serves as a minimal baseline (1 forward + 1 backward FFT per iteration)
 
-## How to Run
+2. **Random Structured Matrix CDI**
+   - Multi-layer CDI with sequential FFT layers
 
-### CPU (NumPy, default FFT):
-```bash
-python gpie/profile/benchmark_holography.py --backend numpy
-```
+3. **Coded Diffraction Pattern (CDP)**
+   - Highlights differences between `parallel` and `sequential` schedules
 
 ---
 
-##  How to Run
-### CPU (NumPy, default FFT):
+## How to Run Benchmarks
+
+### Common Options
+
+All benchmark scripts support the following core options:
+
+- `--device {cpu,cuda}`
+- `--size <int>` (image size, e.g. 128 / 256 / 512 / 1024)
+- `--n-iter <int>` (number of EP iterations)
+- `--schedule {parallel,sequential}`
+- `--block-size <int>` (used only for sequential schedule)
+
+FFT backend selection:
+
+- If `--fft-engine` is **omitted**:
+  - `cpu` → NumPy FFT
+  - `cuda` → CuPy FFT
+- Explicit selection is possible via `--fft-engine {numpy,cupy,fftw}`
+
+---
+
+### CPU Benchmark
+
 ```bash
-python gpie/profile/benchmark_holography.py --backend numpy
-python gpie/profile/benchmark_random_cdi.py --backend numpy
-python gpie/profile/benchmark_coded_diffraction_pattern.py --backend numpy
+python profile/benchmark_holography.py --device cpu
+python profile/benchmark_random_cdi.py --device cpu
+python profile/benchmark_coded_diffraction_pattern.py --device cpu
 ```
 
-### CPU (NumPy + FFTW)
-```bash
-python gpie/profile/benchmark_holography.py --backend numpy --fftw
-python gpie/profile/benchmark_holography.py --backend numpy --fftw --threads 4 --planner-effort FFTW_MEASURE
-python gpie/profile/benchmark_holography.py --backend numpy --fftw --threads 8 --planner-effort FFTW_PATIENT
-```
-⚠️ Note: FFTW backend is only valid with --backend numpy. Using --backend cupy --fftw will raise an error.
+### GPU (CUDA / CuPy) Benchmark
 
-### GPU (CuPy) Benchmark:
 ```bash
-python gpie/profile/benchmark_holography.py --backend cupy
-python gpie/profile/benchmark_random_cdi.py --backend cupy
-python gpie/profile/benchmark_coded_diffraction_pattern.py --backend cupy
+python profile/benchmark_holography.py --device cuda
+python profile/benchmark_random_cdi.py --device cuda
+python profile/benchmark_coded_diffraction_pattern.py --device cuda
 ```
 
-### Profiling(cProfile):
+### Iteration-Level Profiling (cProfile)
+
 ```bash
-python gpie/profile/benchmark_holography.py --backend numpy --profile
-python gpie/profile/benchmark_random_cdi.py --backend cupy --profile
+python profile/benchmark_coded_diffraction_pattern.py  --device cuda --profile 
 ```
 
 ## Benchmark Environment of the developer
@@ -85,35 +109,15 @@ python gpie/profile/benchmark_random_cdi.py --backend cupy --profile
 
 - **Note**: Results are device-dependent and may vary on different hardware or driver configurations.
 
-##  Benchmark Results (512 x 512 pixels, 100 iterations)
+##  Benchmark Results (512 x 512 pixels, per-iteration time, parallel schedule)
 
-| Model                  | NumPy (default FFT) | NumPy + FFTW (1 thread) | NumPy + FFTW (4 threads) | CuPy (GPU, 2nd run)|
-|------------------------ |------------------- |------------------------ |--------------------------|--------------------|
-| **Holography**          | 2.6 s              | 2.6 s                   | 2.4 s                    | 0.5 s             |
-| **Random CDI**          | 6.2 s              | 6.1 s                   | 5.7 s                    | 0.8 s            |
-| **CDP (4 measurements)** | 15.2 s            | 15.3 s                   | 14.2 s                    | 0.7 s              |
+| Model                  | NumPy (default FFT) | NumPy + FFTW       | CuPy (GPU)       |
+|------------------------ |------------------- |------------------------ |--------------------|
+| **Holography**          | 26-30 ms             | 24-28 ms                  | 2-8 ms             |
+| **Random CDI (2 layers)** | 60-68 ms           | 54-64 ms                  | 4-10 ms            |
+| **CDP (4 masks, parallel)** | 160-190 ms            | 140-170 ms                   | 4-7 ms              |
+| **CDP (4 masks, sequential)** | 160-190 ms            | 140-170 ms                   | 4-7 ms              |
+
 
 ## Profiling Insights
 
-In the Holography, Random CDI, and CDP benchmarks, the share of FFT
-operations under the NumPy backend accounts for roughly **25--45%** of
-total runtime. FFT is therefore the first natural target for
-acceleration, but other costs quickly emerge as new bottlenecks.
-In the ptychography benchmark, the portion of FFT in the runtime is below 15%.
-
-The main competing sources of cost are the `UncertainArray.__truediv__`
-operation and the Laplace-approximation--based message updates in
-`AmplitudeMeasurement` nodes. Optimizing these components is a key
-direction for future development.
-
-On the GPU, the FFT share drops to about **10%**, effectively removing it
-as a bottleneck. Excluding initialization overheads such as kernel
-compilation and RNG setup, the remaining hotspots are the
-Laplace-approximation updates in `AmplitudeMeasurement` and `UncertainArray.as_scalar_precision()`.
-
-For example, in the Holography benchmark, `UA.__truediv__` accounts for
-about **25%** of runtime with the NumPy backend but falls below **10%**
-on CuPy (after the first run). Similar to FFT, elementwise operations
-like `__mul__` and `__truediv__` benefit greatly from GPU acceleration,
-while reductions such as `as_scalar_precision` (involving array
-summations) tend to become the dominant cost.

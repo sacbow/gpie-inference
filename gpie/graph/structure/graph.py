@@ -336,7 +336,6 @@ class Graph:
             else:
                 node.backward()
 
-
     def run(
         self,
         n_iter: int = 10,
@@ -347,6 +346,7 @@ class Graph:
         fft_engine: Literal["numpy", "cupy", "fftw"] | None = None,
         fft_kwargs: Optional[dict] = None,
         callback: Optional[Callable[["Graph", int], None]] = None,
+        iteration_hook: Optional[Callable[["Graph", int, Literal["begin", "end"]], None]] = None,
         verbose: bool = False,
     ) -> None:
         """
@@ -372,18 +372,29 @@ class Graph:
             device:
                 - "cpu": NumPy backend
                 - "cuda": CuPy backend (requires CuPy)
+            fft_engine:
+                FFT engine used during the inference session. If None, inferred from device.
+            fft_kwargs:
+                Extra keyword arguments passed to FFT backend initializer.
             callback:
                 Optional callback called as callback(graph, t) after each iteration t.
+            iteration_hook:
+                Optional hook called at iteration boundaries:
+                    iteration_hook(graph, t, "begin") right before the iteration body
+                    iteration_hook(graph, t, "end") right after the iteration body
+                Intended for profiling/timing, and for separating warm-up / session overhead
+                from per-iteration cost.
             verbose:
                 If True, show a progress bar (requires tqdm).
 
         Raises:
             RuntimeError: If graph is not compiled.
-            ValueError: If invalid device/schedule parameters are given.
+            ValueError: If invalid device/schedule/fft parameters are given.
         """
         # Import locally to keep module-level import surface small
         import numpy as _np
         from ...core.backend import set_backend
+        from ...core.fft import set_fft_backend
 
         # ------------------------------
         # Preconditions
@@ -411,28 +422,33 @@ class Graph:
                 return cp
             raise ValueError(f"Unknown device: {exec_device}")
 
-        # Always restore to CPU at the end of this method (even on exceptions)
         exec_backend = _select_backend(device)
 
-        #fft backend within Inference Session
+        # ------------------------------
+        # FFT backend selection (session-scoped)
+        # ------------------------------
         if fft_kwargs is None:
             fft_kwargs = {}
+
         if fft_engine is None:
             fft_engine = "cupy" if device == "cuda" else "numpy"
-        if device == "cuda" and fft_engine != "cupy":
-            raise ValueError("fft engine is not compatible with array backend")
 
+        # Enforce compatibility between array backend and FFT engine
+        if device == "cuda" and fft_engine != "cupy":
+            raise ValueError("fft_engine must be 'cupy' when device='cuda'.")
+        if device == "cpu" and fft_engine == "cupy":
+            raise ValueError("fft_engine='cupy' requires device='cuda'.")
+
+        # ------------------------------
+        # Run EP inference session
+        # ------------------------------
         try:
-            # ------------------------------
-            # Enter inference session: switch backend + move graph state
-            # ------------------------------
+            # Enter session: switch backend + move state + set FFT backend
             set_backend(exec_backend)
             self.to_backend()
             set_fft_backend(fft_engine, **fft_kwargs)
 
-            # ------------------------------
             # Build block schedule
-            # ------------------------------
             B = self._full_batch_size
             if schedule == "parallel" or block_size is None or block_size >= B:
                 blocks = [None]
@@ -442,9 +458,7 @@ class Graph:
                 from ...core.blocks import BlockGenerator
                 blocks = list(BlockGenerator(B=B, block_size=block_size).iter_blocks())
 
-            # ------------------------------
-            # Iteration driver (optional progress bar)
-            # ------------------------------
+            # Optional progress bar
             if verbose:
                 try:
                     from tqdm import tqdm
@@ -454,28 +468,27 @@ class Graph:
             else:
                 iterator = range(n_iter)
 
-            # ------------------------------
-            # Warm-start:
-            #   - ensures last_forward_message / last_backward_messages buffers exist
-            # ------------------------------
+            # Warm-start (excluded from iteration_hook by design)
             self.forward(block=None)
             self.backward(block=None)
 
-            # ------------------------------
             # Main EP loop
-            # ------------------------------
             for t in iterator:
+                if iteration_hook is not None:
+                    iteration_hook(self, t, "begin")
+
                 for blk in blocks:
                     self.forward(block=blk)
                     self.backward(block=blk)
+
+                if iteration_hook is not None:
+                    iteration_hook(self, t, "end")
 
                 if callback is not None:
                     callback(self, t)
 
         finally:
-            # ------------------------------
-            # Exit inference session: ALWAYS restore CPU backend + move state back
-            # ------------------------------
+            # Exit session: ALWAYS restore CPU backend + move state back
             set_fft_backend("numpy")
             set_backend(_np)
             self.to_backend()
