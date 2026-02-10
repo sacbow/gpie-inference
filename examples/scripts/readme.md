@@ -51,7 +51,7 @@ CDP performs phase retrieval from multiple masked FFT amplitude observations.
 ### 🔧 Script
 
 ```bash
-python examples/scripts/coded_diffraction_pattern/coded_diffraction_pattern.py --n-iter 200 --size 256 --measurements 4 --save-graph
+python examples/scripts/coded_diffraction_pattern/coded_diffraction_pattern.py --n-iter 300 --size 256 --measurements 4 --save-graph
 ```
 
 | Option           | Description                                      |
@@ -70,22 +70,15 @@ python examples/scripts/coded_diffraction_pattern/coded_diffraction_pattern.py -
 
 ### 🔬 Scheduling Benchmark (Sequential vs Parallel)
 
-In addition to single-run reconstructions, this example includes a benchmark
-comparing **sequential** and **parallel** scheduling strategies in EP.
+In addition to single-run reconstructions, this example includes a benchmark comparing **sequential** and **parallel** scheduling strategies in EP.
 
-The benchmark repeatedly solves the same CDP instance with different random seeds
-and visualizes the distribution of reconstruction error over iterations.
+The benchmark repeatedly solves the same CDP instance with different random seeds and visualizes the distribution of reconstruction error over iterations.
 
 #### 🔧 Script
 
 ```bash
-python examples/scripts/coded_diffraction_pattern/scheduling_benchmark.py \
-    --trials 10 \
-    --n-iter 200 \
-    --size 256 \
-    --measurements 3 \
-    --noise 1e-3 \
-    --damping 0.5
+python examples/scripts/coded_diffraction_pattern/sequential_vs_parallel.py --trials 10 --measurements 3 --size 64 --n-iter 400
+```
 
 
 ### 📖 Reference
@@ -106,7 +99,7 @@ Structured CDI applies multiple phase layers before amplitude detection.
 ### 🔧 Script
 
 ```bash
-python examples/scripts/random_structured_cdi/random_structured_cdi.py --n-iter 200 --size 256 --layers 2 --support-radius 0.3 --save-graph
+python examples/scripts/random_structured_cdi/random_structured_cdi.py --n-iter 300 --size 256 --layers 2 --support-radius 0.3 --save-graph
 ```
 
 | Option         | Description                                      |
