@@ -1,5 +1,23 @@
 # Changelog
 
+## [v0.3.1] — 2026-02-10
+
+### Added
+- Graph inspection API
+  - Latent variables (Wave) can now be inspected directly via `graph[label]`
+    - e.g. posterior mean: g["object"]["mean"]
+    - posterior variance: g["object"]["variance"]
+  - Improves usability for monitoring, debugging, and post-processing inference results
+
+- Synthetic data generation API
+  - Added `Graph.generate_observations()`
+  - Randomness for data generation is fully controlled via a user-supplied RNG
+
+### Changed
+- Unified device policy for inference sessions
+  - Accelerator devices (e.g. CUDA) are now used only inside an inference session.
+  - Outside of run(), all graph objects and arrays remain CPU-resident
+
 ## [v0.3.0] — 2026-01-14
 
 ### Added

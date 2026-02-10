@@ -4,8 +4,7 @@
 
 [![codecov](https://codecov.io/gh/sacbow/gpie-inference/graph/badge.svg?token=OVKYM0YQZ4)](https://codecov.io/gh/sacbow/gpie-inference)
 
-**gPIE** is a modular, extensible Python framework for structured probabilistic inference via
-**Expectation Propagation (EP)** on factor graphs, with **explicit control over message scheduling**.
+**gPIE** is a modular, extensible Python framework for structured probabilistic inference via **Expectation Propagation (EP)** on factor graphs, with applications to inverse problems in computational photonics.
 
 
 ## Project Structure
@@ -77,8 +76,9 @@ gpie-inference/
 │   │   │
 │   │   └── structure/            # Graph structure, DSL, visualization
 │   │       ├── __init__.py
-│   │       ├── graph.py
-│   │       ├── model.py
+│   │       ├── graph.py          # orchestrates inference
+│   │       ├── wave_view.py      # help inspection of the graph state
+│   │       ├── model.py          # decorator for constructing graph from Domain Specific Language(DSL)
 │   │       ├── visualization.py
 │   │       ├── _bokeh_vis.py
 │   │       └── _matplotlib_vis.py
@@ -94,174 +94,98 @@ gpie-inference/
 │
 └── gpie.egg-info/                # Package metadata (generated)
 
-
 ```
 
-## Features
+## Quick Start: Defining an Inverse Problem & Running Approximate Bayes
+In gPIE, a Bayesian inverse problem is defined by writing its forward model using a small domain-specific language (DSL) .
 
-- **Flexible message scheduling for Expectation Propagation (EP)**
-  - Parallel (Jacobi-style) scheduling
-  - Sequential (Gauss–Seidel-style) scheduling
-  - Block-wise asynchronous scheduling
-  - Scheduling is controlled *at runtime* without changing the model code
-
-- **Expectation Propagation (EP)** on factor graphs
-  - Generic EP engine decoupled from specific imaging models
-  - Supports non-convex and complex-valued inference problems
-
-- **UncertainArray abstraction**
-  - Unified representation of real and complex Gaussian distributions, with isotropic and anisotropic variance
-
-- **NumPy / CuPy backend support**
-  - Seamless switching between CPU and GPU backends:
-    ```python
-    import numpy as np, cupy as cp, gpie
-    gpie.set_backend(cp)  # or np
-    ```
-  - Identical model and inference code for CPU and GPU execution
-
-- **Modular factor graph construction**
-  - Priors (Gaussian, sparse, support-based)
-  - Deterministic propagators (FFT, phase modulation, multiplication, slicing, replication)
-  - Measurement models (Gaussian, amplitude-based)
-
-- **Adaptive damping mechanisms**
-  - `AmplitudeMeasurement`: fitness-based auto-tuning (`damping="auto"`)
-  - `SparsePrior`: log-evidence-based auto-tuning (`damping="auto"`)
-  - Optional manual damping
-
-- **Built-in sampling and synthetic data generation**
-  - Forward sampling from factor graphs
-  - Consistent generation of observed variables for benchmarking
-
-- **Graph introspection and visualization**
-  - Interactive visualization via `graph.visualize()` (Bokeh / Graphviz)
-  - Useful for debugging and model inspection
-
-
-## What's New
-
-See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
-
-**v0.3.0**:  
-Major architectural update introducing **explicit and flexible message scheduling** for Expectation Propagation.
-
-- Parallel, sequential, and block-wise (asynchronous) EP scheduling
-- Runtime control of scheduling without modifying model definitions
-
-## Quick Start
-
-Below is a minimal example demonstrating how to define a probabilistic model
-and run Expectation Propagation with different scheduling strategies.
+### Model Definition
+Models are defined under the `@model` decorator:
 
 ```python
-from gpie import model, GaussianPrior, GaussianMeasurement
-
-# Define a simple Gaussian observation model
 @model
-def simple_ep_model(noise):
-    x = ~GaussianPrior(event_shape=(128, 128), label="x")
-    GaussianMeasurement(var=noise) << x
-    return
-
-# Build the factor graph
-graph = simple_ep_model(noise=1e-3)
-
-# Run EP with different scheduling strategies
-graph.run(n_iter=50, schedule="parallel")
-graph.run(n_iter=50, schedule="sequential")
-graph.run(n_iter=50, schedule="block", block_size=4)
+def coded_diffraction_pattern(shape, n_measurements, phase_masks, noise):
+    x = ~GaussianPrior(event_shape=shape, label="object", dtype=np.complex64)
+    x_batch = replicate(x, batch_size=n_measurements)
+    y = fft2(phase_masks * x_batch)
+    AmplitudeMeasurement(var=noise) << y
 ```
-After running EP, posterior means and variances can be accessed via:
+
+- The model definition describes only the generative structure:
+  - latent variables (`Wave`)
+  - deterministic operators (FFT, multiplication, replication of variable)
+  - measurement likelihoods
+
+- No data, or device are specified at this stage.
+
+Calling the model function instantiates and compiles a factor graph:
+
 ```python
-x_est = graph.get_wave("x").compute_belief().data
+g = coded_diffraction_pattern(...)
 ```
 
+### Injecting data
+For generating synthetic data, one can set the ground truth by accessing the labeled latent variables.
 
-## Tutorials & Notebooks
-A set of demonstration notebooks is available under:
-``
-examples/notebooks/
-``
-
-Each notebook corresponds to a different inverse problem or imaging model:
-
-- `holography_demo.ipynb`
-- `coded_diffraction_pattern_demo.ipynb`
-- `random_structured_cdi_demo.ipynb`
-- `compressed_sensing_demo.ipynb`
-
-These illustrate the use of gPIE for EP-based inference on realistic synthetic data.
-
-
-## Benchmarks & profiling
-- GPU acceleration via CuPy
-- Profiling utilities (profile/) include:
-```bash
-  python profile/benchmark_holography.py --backend cupy --profile
-  python profile/benchmark_coded_diffraction_pattern.py --backend numpy
-```
-See [profile/README.md](./profile/README.md) for detailed results and profiling insights.
-
-##  Installation
-
-This project has been tested on **Python 3.10.5**.
-
----
-
-##  Dependencies
-
-### Core Dependencies
-| Package      | Version   | Purpose                        |
-|--------------|-----------|--------------------------------|
-| `numpy`      | ≥2.2.6    | Core tensor computation (CPU backend) |
-
-###  Optional (for GPU and visualization)
-| Package        | Version     | Used for                          |
-|----------------|-------------|-----------------------------------|
-| `cupy`         | ≥13.5.0     | GPU backend acceleration          |
-| `matplotlib`   | ≥3.10.5     | Static visualization    |
-| `bokeh`        | ≥3.7.3      | Interactive visualization    |
-| `networkx`     | ≥3.3        | Graph structure layouting          |
-| `pygraphviz`   | ≥1.10       |  Graph structure layouting        |
-| `graphviz`     | system pkg  | Required by `pygraphviz` (native) |
-
-> **Notes:**
-> - To use **CuPy**, ensure that your environment has a supported CUDA toolkit version installed.
-> - `pygraphviz` requires [Graphviz](https://graphviz.org/) to be **installed separately**.
-
----
-
-### 📦 Install with pip
-
-**Minimum setup (core functionality only):**
-
-```bash
-pip install -e .
+```python
+g.set_sample("object", complex_img.astype(np.complex64))
+g.generate_observations(rng=np.random.default_rng(seed=999))
 ```
 
-###  Development Setup
+- `set_sample(label, value)` assigns ground truth to a latent variable.
+- `generate_observations()` synthesizes noisy measurements from the forward model.
+- Randomness for data generation is fully controlled via an explicit RNG.
 
-Clone and install the repository in editable mode:
+### Running EP Inference
+Inference is started by calling `g.run()`:
 
-```bash
-git clone https://github.com/sacbow/gpie.git
-cd gpie
-pip install -e .
+```python
+g.set_init_rng(rng=np.random.default_rng(seed=111))
+
+g.run(
+    n_iter=400,
+    device="cpu",   # or "cuda"
+    callback=monitor,
+)
+```
+- `set_init_rng()` controls random initialization of EP messages
+- `device` specifies the execution backend (`cpu` / `cuda`)
+- `callback(graph, iteration)` enables monitoring during inference
+
+All arrays are transferred to the target device at the start of `run()`, and results are transferred back to CPU when inference finishes.
+
+### Inspecting Posterior Estimates
+After inference, posterior estimates are accessible via labeled variables:
+
+```python
+object_mean = g["object"]["mean"] #posterior mean
+object_variance  = g["object"]["variance"] #posterior variance
 ```
 
-This will allow you to make changes to the source code without reinstalling the package.
+## Advanced: Inference Schedules
+gPIE supports both synchronous and asynchronous scheduling of message passing algorithm, when the model involves `replicate` or `extract_patches` operations (for e.g., in Coded Diffraction Pattern and Ptychography.)
 
-## Running Tests
-
-This project uses `pytest` for unit testing. To run the full test suite:
-
-```bash
-pytest test/ --cov=gpie --cov-report=term-missing
+### Parallel Schedule (Default)
+```python
+g.run(
+    n_iter=400,
+    device="cuda",
+    schedule="parallel"
+)
 ```
+- All batch elements are updated simultaneously in each EP iteration
+- Best choice for exploiting GPU acceleration
 
-As of the latest release, the test coverage is approximately 91%, covering both CPU and GPU (CuPy) backends.
-
+### Sequential Schedule (Block-wise EP)
+```python
+g.run(
+    n_iter=400,
+    device="cuda",
+    schedule="sequential"
+)
+```
+- When the observed data consists of several measurements, each data is visited sequentially to update posterior distribution.
+- Often useful for stabilizing the convergence in challenging inverse problems such as phase retrieval.
 
 ## Related libraries
 
