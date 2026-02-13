@@ -26,7 +26,7 @@ def coded_diffraction_pattern(shape, n_measurements, phase_masks, noise):
   - deterministic operators (e.g., FFT, addition, multiplication, replication of variable)
   - measurement likelihoods
 
-- No data, or device are specified at this stage.
+- No data or execution device is specified at this stage.
 
 Calling the model function instantiates and compiles a factor graph:
 
@@ -276,7 +276,7 @@ Infer.NET is a mature probabilistic programming framework developed at Microsoft
 - **Difference**: Infer.NET relies on a compilation-based execution model and requires a global choice of inference algorithm. In contrast, gPIE allows compositional combinations of message passing rules (EP and VMP) within a single model and emphasizes runtime control of scheduling.
 
 
-### Inverse Probelem Solvers for imaging
+### Inverse Problem Solvers for imaging
 Several modern libraries address inverse problems in computational imaging, founded in different algorithmic paradigms.
 
 #### [ProxImaL (Python)](https://www.proximal-lang.org/en/latest/)
@@ -284,12 +284,12 @@ ProxImaL provides a domain-specific language for expressing inverse problems in 
 It supports proximal splitting methods (e.g., ADMM, primal–dual algorithms) and includes GPU acceleration as well as proximal operators for phase retrieval and total variation regularization.
 
 - **Strength**: Flexible DSL that allows users to construct objective functions that include imaging-specific proximal terms.
-- **Difference**: ProxImaL formulates inverse problems as optimization problem, whereas gPIE adopts a probabilistic factor-graph formulation and constructs inference algorithms via expectation propagation.
+- **Difference**: ProxImaL formulates inverse problems as optimization problems, whereas gPIE adopts a probabilistic factor-graph formulation and constructs inference algorithms via expectation propagation.
 
 #### [CUQIpy (Python)](https://cuqi-dtu.github.io/CUQIpy/)
 CUQIpy follows a Bayesian approach and emphasizes sampling-based inference, particularly Markov chain Monte Carlo (MCMC), with automated selection of sampling strategies.
 
-- **Strength**: Uncertainty quantification via posterior sampling, and mechanism for choosing efficient MCMC method from specified model.
+- **Strength**: Uncertainty quantification via posterior sampling, and mechanism for selecting efficient MCMC methods based on the specified model.
 - **Difference**: While CUQIPy can capture the correlation of the uncertainty in each pixel value, gPIE neglects the pixel-wise correlations to achieve scalability comparable with optimization methods.
 
 #### [DeepInverse (Python / PyTorch)](https://deepinv.github.io/deepinv/)
