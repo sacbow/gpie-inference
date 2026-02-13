@@ -14,7 +14,6 @@ requires-python = ">=3.9"
 # ---- Core dependencies ----
 dependencies = [
     "numpy>=2.2.6",
-    "networkx>=3.3",
 ]
 
 # ---- Optional dependencies ----
@@ -29,6 +28,7 @@ fft = [
 ]
 viz = [
     # for visualization
+    "networkx>=3.3",
     "matplotlib>=3.9.0",
     "pygraphviz>=1.10",
     "bokeh>=3.7",
