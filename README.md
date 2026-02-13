@@ -4,7 +4,7 @@
 
 [![codecov](https://codecov.io/gh/sacbow/gpie-inference/graph/badge.svg?token=OVKYM0YQZ4)](https://codecov.io/gh/sacbow/gpie-inference)
 
-**gPIE** is a modular, extensible Python framework for structured probabilistic inference via **Expectation Propagation (EP)** on factor graphs, with applications to inverse problems in computational photonics.
+**gPIE** is a lightweight probabilistic inference engine for structured inverse problems, typically arising in computational imaging. It emphasizes compositional modeling and scalable expectation-propagation-based inference with minimal dependencies.
 
 ## Quick Start: Defining an Inverse Problem & Running Approximate Bayes
 In gPIE, a Bayesian inverse problem is defined by writing its forward model using a small domain-specific language (DSL) .
