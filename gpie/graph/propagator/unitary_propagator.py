@@ -118,6 +118,10 @@ class UnitaryPropagator(Propagator, ABC):
         x_wave = self.inputs["input"]
         if x_wave.precision_mode_enum == PrecisionMode.ARRAY:
             self._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR)
+        # if input_wave has real-dtype, the output-wave must have scalar precision.
+        if np().issubdtype(x_wave.dtype, np().floating):
+            if self._precision_mode is None:
+                self._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR)
 
     def set_precision_mode_backward(self):
         """
@@ -155,17 +159,14 @@ class UnitaryPropagator(Propagator, ABC):
         """
         data = self._forward_array(msg_x.data)
 
-        # NOTE: adjust depending on UA implementation
-        scalar = getattr(msg_x, "_scalar_precision", None)
-        if scalar is None:
-            scalar = msg_x.is_scalar_precision  # if available
+        scalar = msg_x._scalar_precision
 
         if scalar:
             prec = msg_x.precision(raw=True)
         else:
             prec = reduce_precision_to_scalar(msg_x.precision(raw=True))
 
-        return UA(array=data, dtype=msg_x.dtype, precision=prec, batched=True)
+        return UA(array=data, dtype=self.dtype, precision=prec, batched=True)
 
     def _backward_UA(self, msg_y: UA) -> UA:
         """
@@ -175,9 +176,7 @@ class UnitaryPropagator(Propagator, ABC):
         """
         data = self._backward_array(msg_y.data)
 
-        scalar = getattr(msg_y, "_scalar_precision", None)
-        if scalar is None:
-            scalar = msg_y.is_scalar_precision
+        scalar = msg_y._scalar_precision
 
         if scalar:
             prec = msg_y.precision(raw=True)

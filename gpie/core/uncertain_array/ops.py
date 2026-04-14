@@ -8,14 +8,35 @@ def mul_ua(self: UncertainArray, other: UncertainArray) -> UncertainArray:
     """
     Combine two UncertainArrays under the additive precision model.
 
-    This corresponds to fusing two independent Gaussian beliefs:
-        posterior_precision = p1 + p2
-        posterior_mean = (p1 * m1 + p2 * m2) / (p1 + p2)
+    Supports mixed real/complex Gaussian fusion by projecting complex inputs
+    to real when dtype mismatch occurs.
     """
+
+    xp = np()
+
+    def is_real(dtype):
+        return xp.issubdtype(dtype, xp.floating)
+
+    def is_complex(dtype):
+        return xp.issubdtype(dtype, xp.complexfloating)
+
+    if self.dtype != other.dtype:
+        # Only allow real/complex mismatch (for use in fft with real/complex conversion)
+        if is_real(self.dtype) and is_complex(other.dtype):
+            other = other.real
+        elif is_complex(self.dtype) and is_real(other.dtype):
+            self = self.real
+
+        else:
+            raise TypeError(
+                f"Dtype mismatch in __mul__: {self.dtype} vs {other.dtype}"
+            )
     self.assert_compatible(other, context="__mul__")
 
+    #  Gaussian fusion
     d1, d2 = self.data, other.data
-    p1, p2 = self.precision(raw = True), other.precision(raw = True) 
+    p1 = self.precision(raw=True)
+    p2 = other.precision(raw=True)
 
     precision_sum = p1 + p2
     result_data = (p1 * d1 + p2 * d2) / precision_sum
