@@ -81,7 +81,12 @@ class SupportPrior(Prior):
         real_dtype = get_real_dtype(dtype)
 
         mean = np().zeros_like(self.support, dtype=dtype)
-        precision = np().where(self.support, real_dtype(1), self.large_value)
+
+        precision = np().where(
+            self.support,
+            np().array(1, dtype=real_dtype),
+            np().array(self.large_value, dtype=real_dtype)
+            )
 
         return UA(mean, dtype=dtype, precision=precision)
 

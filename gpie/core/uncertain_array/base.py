@@ -125,7 +125,7 @@ class UncertainArray:
 
         - If dtype is unchanged, return self.
         - Complex → Real: extract real part, scale precision by 2, with warning.
-        - Real → Complex: promote to complex type, scale precision by 0.5.
+        - Real → Complex: promote to complex type
         - Complex → Complex (different precision): direct cast, precision unchanged.
 
         Args:
@@ -154,7 +154,7 @@ class UncertainArray:
         # Real → Complex
         if np().issubdtype(dtype, np().complexfloating) and self.is_real():
             complex_data = self.data.astype(dtype)
-            new_precision = 0.5 * self.precision(raw=True)
+            new_precision = self.precision(raw=True)
             return UncertainArray(complex_data, dtype=dtype, precision=new_precision)
 
         # Complex → Complex (precision change: e.g., complex64 ↔ complex128)

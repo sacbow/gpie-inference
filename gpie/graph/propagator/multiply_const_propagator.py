@@ -272,10 +272,6 @@ class MultiplyConstPropagator(Propagator):
         prec = out_blk.precision(raw=True) * abs_sq
         ua = UA(mu, dtype=dtype, precision=prec)  # array precision by construction
 
-        #for numerical stability
-
-        ua = UA(mu, dtype=dtype, precision=prec)  # array precision by construction
-
         # special EP handling only for SCALAR_TO_ARRAY (input scalar)
         if self.precision_mode_enum == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
             x_wave = self.inputs["input"]
@@ -296,8 +292,12 @@ class MultiplyConstPropagator(Propagator):
         x = self.inputs["input"].get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
-        const = self.const.astype(x.dtype) if self.const_dtype != x.dtype else self.const
-        return x * const
+
+        dtype = np().result_type(x.dtype, self.const.dtype)
+        x_cast = x.astype(dtype, copy=False)
+        const = self.const.astype(dtype, copy=False)
+
+        return x_cast * const
 
     def __matmul__(self, wave: Wave) -> Wave:
         """
