@@ -494,6 +494,67 @@ class Graph:
             self.to_backend()
 
 
+    def set_observation(
+        self,
+        data,
+        *,
+        precision=None,
+        mask=None,
+        label=None,
+    ):
+        """
+        Set observed data to a Measurement node in the graph.
+
+        This is a convenience wrapper around Measurement.set_observed().
+
+        Current limitations:
+            - If `label` is None, the graph must contain exactly one Measurement node.
+            - Multiple Measurement nodes without specifying `label` will raise an error.
+
+        Args:
+            data: ndarray, observed data (must match measurement shape)
+            precision: scalar or ndarray precision (optional)
+            mask: optional boolean mask
+            label: optional label of the measurement node
+
+        Raises:
+            RuntimeError: if no measurement found or ambiguous selection
+        """
+
+        # ------------------------------------------------------------
+        # Case 1: label explicitly provided
+        # ------------------------------------------------------------
+        if label is not None:
+            if not hasattr(self, label):
+                raise RuntimeError(f"No measurement with label '{label}' found in graph.")
+
+            m = getattr(self, label)
+
+            # minimal type safety check
+            if not hasattr(m, "set_observed"):
+                raise RuntimeError(f"Node '{label}' is not a Measurement.")
+
+            m.set_observed(data, precision=precision, mask=mask)
+            return
+
+        # ------------------------------------------------------------
+        # Case 2: infer measurement (must be unique)
+        # ------------------------------------------------------------
+        measurements = [
+            node for node in getattr(self, "nodes", [])
+            if hasattr(node, "set_observed")
+        ]
+
+        if len(measurements) == 0:
+            raise RuntimeError("No Measurement node found in graph.")
+
+        if len(measurements) > 1:
+            raise RuntimeError(
+                "Multiple Measurement nodes found. "
+                "Please specify `label=...` in set_observation()."
+            )
+
+        measurements[0].set_observed(data, precision=precision, mask=mask)
 
     def generate_sample(self, rng=None, update_observed: bool = True, mask: Optional[np().ndarray] = None):
         """

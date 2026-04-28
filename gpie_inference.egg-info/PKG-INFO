@@ -34,7 +34,7 @@ Dynamic: license-file
 
 [![codecov](https://codecov.io/gh/sacbow/gpie-inference/graph/badge.svg?token=OVKYM0YQZ4)](https://codecov.io/gh/sacbow/gpie-inference)
 
-**gPIE** is a modular, extensible Python framework for structured probabilistic inference via **Expectation Propagation (EP)** on factor graphs, with applications to inverse problems in computational photonics.
+**gPIE** is a lightweight probabilistic inference engine for structured inverse problems, typically arising in computational imaging. It emphasizes compositional modeling and scalable expectation-propagation-based inference with minimal dependencies.
 
 ## Quick Start: Defining an Inverse Problem & Running Approximate Bayes
 In gPIE, a Bayesian inverse problem is defined by writing its forward model using a small domain-specific language (DSL) .
@@ -53,10 +53,10 @@ def coded_diffraction_pattern(shape, n_measurements, phase_masks, noise):
 
 - The model definition describes only the generative structure:
   - latent variables (`Wave`)
-  - deterministic operators (FFT, multiplication, replication of variable)
+  - deterministic operators (e.g., FFT, addition, multiplication, replication of variable)
   - measurement likelihoods
 
-- No data, or device are specified at this stage.
+- No data or execution device is specified at this stage.
 
 Calling the model function instantiates and compiles a factor graph:
 
@@ -141,14 +141,47 @@ pip install -e .
 ```
 
 ### Core dependencies
-The core of gPIE has intentionally minimal dependencies:
+Core inference functionality depends only on [NumPy](https://numpy.org/).
 
 - Python >= 3.9
-- NumPy >= 
-- NetworkX (used for graph structure utilities)
+- NumPy >= 2.2.6
 
+Since gPIE returns posterior estimates as `numpy.ndarray` objects, users may freely choose any downstream visualization or analysis libraries compatible with NumPy.
 
+### GPU acceleration
+GPU execution is supported via [CuPy](https://cupy.dev/). Install a CuPy build compatible with your local CUDA toolkit, then run
 
+```python
+g.run(device="cuda") # default: device = "cpu"
+```
+
+### FFT engines
+The default FFT engine of gPIE is [pocketfft](https://github.com/mreineck/pocketfft) (when `device = "cpu"`) and [cuFFT](https://developer.nvidia.com/cufft) (when `device = "cuda"`).
+
+On CPU backend, users can install [pyfftw](https://pyfftw.readthedocs.io/en/latest/) and run
+
+```python
+g.run(fft_engine = "fftw")
+```
+
+[FFTW](https://www.fftw.org/) is an auto-tuning library that finds the best plan for computing FFT from candidate plans at runtime. 
+
+### Graph visualization
+Factor graph visualization is provided through:
+
+```python
+graph.visualize(layout=..., backend=...)
+```
+
+Layout engines:
+- [networkx](https://networkx.org/en/) ("spring", "shell", "circular", "kamada_kawai")
+- [pygraphviz](https://pygraphviz.github.io/) (Graphviz-based layout)
+
+Rendering backend:
+- [matplotlib](https://matplotlib.org/)
+- [bokeh](https://bokeh.org/)
+
+These libraries are optional and must be installed separately when using visualization API.
 
 
 ## Project Structure
@@ -243,6 +276,7 @@ gpie-inference/
 
 ## Related libraries
 
+### Message Passing Libraries
 gPIE shares common ground with several existing frameworks for message passing inference:
 
 #### [ForneyLab (Julia)](https://biaslab.github.io/project/forneylab/)
@@ -262,7 +296,7 @@ Second, gPIE supports multiplication between variables through factor nodes impl
 #### [Dimple (Java/Matlab)](https://github.com/analog-garage/dimple)
 Dimple is an early and influential factor-graph-based inference system supporting both discrete and continuous variables, with a strong focus on large-scale discrete inference.
 
-- **Strength**: Pioneered message passing DSLs for large graphical models and achieved scalability through hardware specialization, including a dedicated accelerator (GP5).
+- **Strength**: Achieves scalability through dedicated accelerator (GP5).
 - **Difference**: gPIE targets continuous-valued inference problems and GPU-accelerated scientific Python workflows, rather than discrete inference or hardware-specific execution.
 
 #### [Infer.NET (C#)](https://dotnet.github.io/infer/)
@@ -271,6 +305,28 @@ Infer.NET is a mature probabilistic programming framework developed at Microsoft
 - **Strength**: Industrial-grade implementation with broad model expressiveness and extensive use in both academic and industrial settings.
 - **Difference**: Infer.NET relies on a compilation-based execution model and requires a global choice of inference algorithm. In contrast, gPIE allows compositional combinations of message passing rules (EP and VMP) within a single model and emphasizes runtime control of scheduling.
 
+
+### Inverse Problem Solvers for imaging
+Several modern libraries address inverse problems in computational imaging, founded in different algorithmic paradigms.
+
+#### [ProxImaL (Python)](https://www.proximal-lang.org/en/latest/)
+ProxImaL provides a domain-specific language for expressing inverse problems in a style similar to CVXPY.
+It supports proximal splitting methods (e.g., ADMM, primal–dual algorithms) and includes GPU acceleration as well as proximal operators for phase retrieval and total variation regularization.
+
+- **Strength**: Flexible DSL that allows users to construct objective functions that include imaging-specific proximal terms.
+- **Difference**: ProxImaL formulates inverse problems as optimization problems, whereas gPIE adopts a probabilistic factor-graph formulation and constructs inference algorithms via expectation propagation.
+
+#### [CUQIpy (Python)](https://cuqi-dtu.github.io/CUQIpy/)
+CUQIpy follows a Bayesian approach and emphasizes sampling-based inference, particularly Markov chain Monte Carlo (MCMC), with automated selection of sampling strategies.
+
+- **Strength**: Uncertainty quantification via posterior sampling, and mechanism for selecting efficient MCMC methods based on the specified model.
+- **Difference**: While CUQIPy can capture the correlation of the uncertainty in each pixel value, gPIE neglects the pixel-wise correlations to achieve scalability comparable with optimization methods.
+
+#### [DeepInverse (Python / PyTorch)](https://deepinv.github.io/deepinv/)
+DeepInverse unifies optimization-based, learning-based, and sampling-based approaches within a PyTorch ecosystem, with domain-specific physics modules for modalities such as MRI, tomography, and phase retrieval.
+
+- **Strength**: Deep learning integration and rich ecosystem of physics operators.
+- **Difference**: DeepInverse emphasizes an ecosystem of physics classes corresponding to particular imaging modalities. In contrast, gPIE adopts a compositional domain-specific language that allows users to construct forward models from primitive operations (e.g., FFT, slicing, multiplication, replication), independent of any fixed modality.
 
 
 ##  License
