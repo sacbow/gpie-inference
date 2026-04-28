@@ -541,7 +541,7 @@ class Graph:
         # Case 2: infer measurement (must be unique)
         # ------------------------------------------------------------
         measurements = [
-            node for node in getattr(self, "nodes", [])
+            node for node in self._factors
             if hasattr(node, "set_observed")
         ]
 
